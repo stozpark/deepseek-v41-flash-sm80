@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE="${IMAGE:-lazymio/vllm-backport:v0.13.0-sm80}"
+IMAGE="${IMAGE:-deepseek-v41-flash-sm80:cu129}"
 MODEL_PATH="${MODEL_PATH:-deepseek-ai/DeepSeek-V4.1-Flash}"
 PORT="${PORT:-18005}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-262144}"

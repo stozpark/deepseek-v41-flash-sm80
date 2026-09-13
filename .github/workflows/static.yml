@@ -14,7 +14,9 @@ jobs:
           for f in *.sh; do bash -n "$f"; done
       - name: Python syntax
         run: python3 -m py_compile verify_runtime.py
-      - name: Pin sanity
+      - name: CUDA 12.9 pin sanity
         run: |
-          grep -q '24cb31bb4fd0becee65c810c913a8caa4f610c36' VERSION.env
-          grep -q 'v0.13.0-sm80' Singularity.def
+          grep -q 'CUDA_VERSION=12.9.1' VERSION.env
+          grep -q 'cuda12.9' VERSION.env
+          grep -q 'torch_cuda_arch_list=8.0' build_docker_cu129.sh
+          grep -q 'docker-daemon:' build_sif.sh

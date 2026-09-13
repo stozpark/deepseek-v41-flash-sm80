@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SIF_PATH="${SIF_PATH:-${ROOT_DIR}/deepseek-v41-flash-sm80-cu130.sif}"
+SIF_PATH="${SIF_PATH:-${ROOT_DIR}/deepseek-v41-flash-sm80-cu129.sif}"
 MODEL_PATH="${MODEL_PATH:-deepseek-ai/DeepSeek-V4.1-Flash}"
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-18005}"
