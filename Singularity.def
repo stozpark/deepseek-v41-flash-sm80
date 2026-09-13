@@ -1,0 +1,30 @@
+Bootstrap: docker
+From: lazymio/vllm-backport:v0.13.0-sm80
+
+%labels
+    Maintainer stozpark
+    Model deepseek-ai/DeepSeek-V4.1-Flash
+    GPU NVIDIA-A100-SM80
+    Runtime vllm-backport-v0.13.0-sm80
+    BackportCommit 24cb31bb4fd0becee65c810c913a8caa4f610c36
+
+%environment
+    export PYTHONUNBUFFERED=1
+    export CUDA_DEVICE_ORDER=PCI_BUS_ID
+    export TOKENIZERS_PARALLELISM=false
+    export NCCL_ALGO=Ring
+    export NCCL_PROTO=Simple
+
+%post
+    set -eu
+    python3 - <<'PY'
+import importlib.metadata as m
+for p in ("torch", "triton", "vllm"):
+    try:
+        print(p, m.version(p))
+    except Exception as e:
+        print(p, "unknown", e)
+PY
+
+%runscript
+    exec "$@"

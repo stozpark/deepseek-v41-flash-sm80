@@ -1,0 +1,6 @@
+*.sif
+*.log
+*.pid
+__pycache__/
+.env
+.cache/
