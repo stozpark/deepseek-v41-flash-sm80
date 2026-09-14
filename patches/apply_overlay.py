@@ -115,21 +115,52 @@ replace_once(
     "DeepSeek-V4.1 Responses API text-content hotfix",
 )
 
-# vLLM #56623: text-only deployments must not reserve the vision-only SWA width.
+# vLLM #56623: a DeepSeek V4.1 vision checkpoint served with
+# --language-model-only must keep the plain 128-token SWA width. Mirror the
+# upstream helper and apply it at the V4.1 attention, metadata-builder, and
+# warmup-key call sites. This avoids warming/allocating the unused 1152-wide
+# image-visible path on text-only A100 deployments.
 sparse_swa = DST / "v1/attention/backends/mla/sparse_swa.py"
+sparse_text = sparse_swa.read_text(encoding="utf-8")
+if "def swa_max_image_tokens(" not in sparse_text:
+    anchor = "\n\nclass DeepseekV4SWACache(torch.nn.Module, AttentionLayerBase):"
+    helper = '''\n\ndef swa_max_image_tokens(vllm_config: VllmConfig) -> int:\n    """Extra SWA width needed only when images can actually reach the model."""\n    hf_config = vllm_config.model_config.hf_config\n    if getattr(hf_config, "vision_n_layers", 0) <= 0:\n        return 0\n    mm_config = vllm_config.model_config.multimodal_config\n    if mm_config is not None and mm_config.language_model_only:\n        return 0\n    return int(getattr(hf_config, "vision_max_n_token", 0) or 0)\n'''
+    if anchor not in sparse_text:
+        raise SystemExit(
+            "DeepSeek-V4.1 language-model-only SWA helper: class anchor not found; "
+            "refusing an unsafe patch"
+        )
+    sparse_swa.write_text(
+        sparse_text.replace(anchor, helper + anchor, 1), encoding="utf-8"
+    )
+
 replace_once(
     sparse_swa,
     '''        self.max_image_tokens = (\n            getattr(hf_config, "vision_max_n_token", 0)\n            if getattr(hf_config, "vision_n_layers", 0) > 0\n            else 0\n        )''',
-    '''        mm_config = getattr(self.vllm_config.model_config, "multimodal_config", None)\n        language_model_only = bool(getattr(mm_config, "language_model_only", False))\n        self.max_image_tokens = (\n            0\n            if language_model_only\n            else (\n                getattr(hf_config, "vision_max_n_token", 0)\n                if getattr(hf_config, "vision_n_layers", 0) > 0\n                else 0\n            )\n        )''',
-    "DeepSeek-V4.1 language-model-only SWA-width hotfix",
+    '''        self.max_image_tokens = swa_max_image_tokens(self.vllm_config)''',
+    "DeepSeek-V4.1 language-model-only sparse-SWA width hotfix",
 )
 
 v41_attention = DST / "models/deepseek_v4_1/attention.py"
 replace_once(
     v41_attention,
+    "from vllm.v1.attention.backends.mla.sparse_swa import DeepseekV4SWACache",
+    '''from vllm.v1.attention.backends.mla.sparse_swa import (\n    DeepseekV4SWACache,\n    swa_max_image_tokens,\n)''',
+    "DeepSeek-V4.1 SWA helper import",
+)
+replace_once(
+    v41_attention,
     '''        self.max_image_tokens = (\n            getattr(config, "vision_max_n_token", 0)\n            if getattr(config, "vision_n_layers", 0) > 0\n            else 0\n        )''',
-    '''        mm_config = getattr(vllm_config.model_config, "multimodal_config", None)\n        language_model_only = bool(getattr(mm_config, "language_model_only", False))\n        self.max_image_tokens = (\n            0\n            if language_model_only\n            else (\n                getattr(config, "vision_max_n_token", 0)\n                if getattr(config, "vision_n_layers", 0) > 0\n                else 0\n            )\n        )''',
+    '''        self.max_image_tokens = swa_max_image_tokens(vllm_config)''',
     "DeepSeek-V4.1 attention language-model-only SWA-width hotfix",
+)
+
+v41_cache_utils = DST / "models/deepseek_v4_1/common/ops/cache_utils.py"
+replace_once(
+    v41_cache_utils,
+    '''        image_width = (\n            _hf_config_int(vllm_config, "vision_max_n_token", 0)\n            if _hf_config_int(vllm_config, "vision_n_layers", 0) > 0\n            else 0\n        )''',
+    '''        from vllm.v1.attention.backends.mla.sparse_swa import swa_max_image_tokens\n\n        image_width = swa_max_image_tokens(vllm_config)''',
+    "DeepSeek-V4.1 warmup language-model-only SWA-width hotfix",
 )
 
 # vLLM #50645 / SM8x mHC: DeepGEMM's mHC kernel is Hopper+ only.
@@ -159,6 +190,8 @@ replace_in_class(
 )
 
 # vLLM #55109: narrowed block-table views must use the physical row stride.
+# V4.1 has its own cache utilities; V4 is also patched because the V4.1 model
+# imports shared V4 NVIDIA model/projection code during class construction.
 for cache_utils in (
     DST / "models/deepseek_v4/common/ops/cache_utils.py",
     DST / "models/deepseek_v4_1/common/ops/cache_utils.py",
@@ -217,6 +250,7 @@ marker.write_text(
     "cutedsl_capability_gate=1\n"
     "responses_api_text_hotfix=1\n"
     "language_model_only_swa_hotfix=1\n"
+    "language_model_only_warmup_hotfix=1\n"
     "mhc_sm80_fallback=1\n"
     "cutlass_fp8_sm80_gate=1\n"
     "strided_block_table_gather=1\n"
@@ -225,4 +259,4 @@ marker.write_text(
     encoding="utf-8",
 )
 print(f"Applied {copied} SM80 overlay files to {DST}")
-print("Applied SM80 dependency-closure and post-0909 guarded hotfixes")
+print("Applied DeepSeek-V4.1 SM80 dependency closure and guarded hotfixes")
