@@ -38,14 +38,20 @@ print("BALANCED ROW HELPERS OK")
 
 print("=== direct imports ===")
 mods = [
+    "vllm.models.deepseek_v4",
+    "vllm.models.deepseek_v4.ampere.ampere_sparse",
     "vllm.models.deepseek_v4_1",
     "vllm.models.deepseek_v4_1.quant_config",
     "vllm.models.deepseek_v4_1.attention",
     "vllm.models.deepseek_v4_1.common.engram",
     "vllm.models.deepseek_v4_1.nvidia.model",
     "vllm.models.deepseek_v4_1.ampere.ampere_sparse",
+    "vllm.model_executor.kernels.linear.gemv_triton",
     "vllm.model_executor.layers.sparse_attn_indexer",
+    "vllm.model_executor.warmup.cutedsl_warmup",
+    "vllm.model_executor.warmup.flashinfer_sparse_mla_warmup",
     "vllm.v1.attention.backends.mla.indexer",
+    "vllm.v1.attention.backends.mla.sparse_swa",
     "vllm.v1.attention.ops.fp8_sm80",
     "vllm.v1.attention.ops.mqa_logits_triton",
     "vllm.v1.attention.ops.rocm_aiter_mla_sparse",
@@ -56,14 +62,26 @@ for name in mods:
 print("DIRECT IMPORTS OK")
 
 print("=== registry ===")
-from vllm.model_executor.models.registry import ModelRegistry
+from vllm.model_executor.models.registry import ModelRegistry, _ModelInfo
 
 registered = ModelRegistry.models.get("DeepseekV41ForCausalLM")
 assert registered is not None, "DeepseekV41ForCausalLM is not registered"
 cls = registered.load_model_cls()
 print("MODEL CLS", cls)
-info = registered.inspect_model_cls()
-print("MODEL INSPECT OK", info)
+# inspect_model_cls() deliberately starts a fresh subprocess. On a real A100
+# that is desirable, but on a GitHub-hosted GPU-less runner the child resets
+# vllm.triton_utils.tl to None. Inspect directly here so this test remains an
+# API/source compatibility test rather than a fake GPU-platform test.
+info = _ModelInfo.from_model_cls(cls)
+print("MODEL INSPECT-DIRECT OK", info)
+
+print("=== dspark shared-api capability ===")
+from vllm.model_executor.layers.logits_processor import LogitsProcessor
+
+local_argmax_api = hasattr(LogitsProcessor, "get_shard_logits") and hasattr(
+    LogitsProcessor, "get_top_tokens"
+)
+print("DSPARK_LOCAL_ARGMAX_API", local_argmax_api)
 
 print("=== responses-api tokenizer hotfix ===")
 from vllm.tokenizers.deepseek_v41 import _normalize_messages
@@ -81,6 +99,7 @@ import vllm
 
 root = Path(vllm.__file__).resolve().parent
 required = [
+    root / "model_executor/kernels/linear/gemv_triton.py",
     root / "v1/attention/ops/fp8_sm80.py",
     root / "v1/attention/ops/mqa_logits_triton.py",
     root / "models/deepseek_v4_1/ampere/ampere_sparse.py",
