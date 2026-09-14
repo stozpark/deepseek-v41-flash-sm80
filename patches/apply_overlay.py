@@ -48,10 +48,37 @@ def replace_once(path: Path, old: str, new: str, description: str) -> None:
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
+def replace_in_class(
+    path: Path,
+    class_name: str,
+    old: str,
+    new: str,
+    description: str,
+) -> None:
+    """Replace only inside one top-level class, never a similar sibling class."""
+    text = path.read_text(encoding="utf-8")
+    marker = f"class {class_name}"
+    start = text.find(marker)
+    if start < 0:
+        raise SystemExit(f"{description}: class {class_name} not found in {path}")
+    end = text.find("\nclass ", start + len(marker))
+    if end < 0:
+        end = len(text)
+    body = text[start:end]
+    if new in body:
+        return
+    if old not in body:
+        raise SystemExit(
+            f"{description}: expected text not found inside {class_name} in {path}; "
+            "refusing an unsafe patch"
+        )
+    body = body.replace(old, new, 1)
+    path.write_text(text[:start] + body + text[end:], encoding="utf-8")
+
+
 # Dependency closure for the SM80 sparse-indexer query/decode sharding added
 # by wtdcode/vllm-backport a6ef07a + 6793ead. The official 0909 image predates
 # these two shared helpers, while the pinned SM80 indexer imports them.
-# Keep the official distributed/utils.py otherwise untouched.
 dist_utils = DST / "distributed/utils.py"
 dist_text = dist_utils.read_text(encoding="utf-8")
 if "def balanced_row_counts(" not in dist_text:
@@ -64,8 +91,6 @@ elif "def balanced_row_bounds(" not in dist_text:
     )
 
 # Post-0909 correctness hotfix: vllm-project/vllm#56297 / backport #78.
-# Responses API uses input_text/output_text while the 0909 V4.1 tokenizer
-# accepts only `text`.
 tokenizer = DST / "tokenizers/deepseek_v41.py"
 replace_once(
     tokenizer,
@@ -75,11 +100,7 @@ replace_once(
     "DeepSeek-V4.1 Responses API text-content hotfix",
 )
 
-# Post-0909 fix corresponding to vLLM PR #56623. A V4.1 vision-capable
-# checkpoint served with --language-model-only must not reserve the extra
-# vision-visible SWA width (1024 tokens for V4.1-Flash). This is useful on
-# SM80 too: it avoids unnecessary metadata/index bandwidth. If multimodal
-# config is absent or language_model_only is false, behavior is unchanged.
+# vLLM #56623: text-only deployments must not reserve the vision-only SWA width.
 sparse_swa = DST / "v1/attention/backends/mla/sparse_swa.py"
 replace_once(
     sparse_swa,
@@ -96,10 +117,7 @@ replace_once(
     "DeepSeek-V4.1 attention language-model-only SWA-width hotfix",
 )
 
-# SM80 mHC correctness: the 0909 branch's first-layer broadcast path invokes
-# DeepGEMM unconditionally, but DeepGEMM's mHC kernel is Hopper+ only. The
-# backport fix (later upstreamed as vLLM #50645) uses the already-present
-# TileLang prenorm GEMM when DeepGEMM is unsupported.
+# vLLM #50645 / SM8x mHC: DeepGEMM's mHC kernel is Hopper+ only.
 mhc_tilelang = DST / "model_executor/kernels/mhc/tilelang.py"
 replace_once(
     mhc_tilelang,
@@ -114,21 +132,19 @@ replace_once(
     "SM80 mHC broadcast TileLang fallback",
 )
 
-# vLLM #53376: CUTLASS FP8 auto-selection must decline SM80. Without this,
-# mixed FP8 linear layers can choose a CUTLASS kernel that has no Ampere
-# implementation instead of falling through to the intended Marlin fallback.
+# vLLM #53376: CUTLASS FP8 auto-selection must decline SM80 and fall through
+# to the Marlin fallback. Scope this replacement to the FP8 class only: the
+# neighboring INT8 class intentionally has a similar is_supported() body.
 cutlass_fp8 = DST / "model_executor/kernels/linear/scaled_mm/cutlass.py"
-replace_once(
+replace_in_class(
     cutlass_fp8,
+    "CutlassFP8ScaledMMLinearKernel",
     '''        if not current_platform.is_cuda():\n            return False, "requires CUDA."\n        return True, None''',
     '''        if not current_platform.is_cuda():\n            return False, "requires CUDA."\n        if compute_capability is None:\n            capability_tuple = current_platform.get_device_capability()\n            compute_capability = (\n                -1 if capability_tuple is None else capability_tuple.to_int()\n            )\n        if not ops.cutlass_scaled_mm_supports_fp8(compute_capability):\n            return (\n                False,\n                "CUTLASS FP8 GEMM is unavailable for compute capability "\n                f"{compute_capability} with this CUDA build (needs SM89 with "\n                "CUDA 12.4 or newer, or SM90+ with CUDA 12.0 or newer).",\n            )\n        return True, None''',
     "SM80 CUTLASS FP8 capability gate",
 )
 
-# vLLM #55109: narrowed block-table views retain the backing tensor's larger
-# row stride. The pinned SM80 gather kernel used shape[-1], so request 2+
-# could read the wrong physical block and issue an OOB access. V4 and V4.1
-# carry separate copies of this kernel in the pinned tree; fix both.
+# vLLM #55109: narrowed block-table views must use the physical row stride.
 for cache_utils in (
     DST / "models/deepseek_v4/common/ops/cache_utils.py",
     DST / "models/deepseek_v4_1/common/ops/cache_utils.py",
@@ -162,7 +178,6 @@ missing_overlay = [str(p) for p in required_overlay if not p.exists()]
 if missing_overlay:
     raise SystemExit(f"SM80 overlay incomplete after copy: {missing_overlay}")
 
-# Long-context correctness invariants from the SM80 paged-indexer fallback.
 mqa_text = (DST / "v1/attention/ops/mqa_logits_triton.py").read_text(encoding="utf-8")
 for required in (".to(tl.int64)", "k_offset < context_len"):
     if required not in mqa_text:
@@ -171,8 +186,6 @@ for required in (".to(tl.int64)", "k_offset < context_len"):
             + required
         )
 
-# The pinned backport already contains the fourth #50576 correctness fix:
-# fused inverse-RoPE passes launch_pdl in both the kernel dispatcher and wrapper.
 inv_rope = (DST / "models/deepseek_v4/common/ops/fused_inv_rope_fp8_quant.py").read_text(
     encoding="utf-8"
 )
