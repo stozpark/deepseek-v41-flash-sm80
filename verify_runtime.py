@@ -68,7 +68,7 @@ if cutlass_ok:
 from vllm.v1.attention.ops.mqa_logits_triton import fp8_paged_mqa_logits_triton
 
 B, NEXT_N, H, D = 1, 1, 16, 128
-BLOCK_SIZE = 64
+BLOCK_SIZE = 128
 q = torch.zeros((B, NEXT_N, H, D), dtype=torch.float8_e4m3fn, device=device)
 kv_cache = torch.zeros(
     (1, BLOCK_SIZE, 1, D + 4), dtype=torch.uint8, device=device
@@ -93,8 +93,8 @@ print("paged_mqa_sm80_tail_mask: OK")
 
 # Reproduce the narrowed block-table case from vLLM #55109. The active view
 # has width 1 but retains a backing stride of 4. Before the fix request 2+
-# addressed the wrong row and could issue an illegal memory access. Compare the
-# narrowed view against its contiguous copy; they must be bit-identical.
+# addressed the wrong row and could issue an illegal memory access. V4.1 on
+# SM80 uses 128-token indexer pages, so use that production block size here.
 from vllm.models.deepseek_v4_1.common.ops.cache_utils import (
     dequantize_and_gather_k_cache,
     quantize_and_insert_k_cache,
@@ -105,7 +105,7 @@ HEAD_DIM = 512
 NOPE_DIM = 448
 SCALE_DIM = 8
 HEAD_BYTES = NOPE_DIM + (HEAD_DIM - NOPE_DIM) * 2 + SCALE_DIM
-GATHER_BLOCK_SIZE = 256
+GATHER_BLOCK_SIZE = 128
 compressed_kv = torch.randn(
     NUM_REQS, HEAD_DIM, dtype=torch.bfloat16, device=device
 )
@@ -162,5 +162,15 @@ print("strided_block_table_gather: OK")
 swa_text = (root / "v1/attention/backends/mla/sparse_swa.py").read_text()
 if 'language_model_only = bool(getattr(mm_config, "language_model_only", False))' not in swa_text:
     raise SystemExit("ERROR: --language-model-only SWA-width hotfix missing")
+
+# Local-argmax DSpark is an optional optimization and needs newer logits APIs.
+# Report capability, but do not fail: the serving script keeps this optimization
+# disabled by default and uses the full-vocab DSpark path instead.
+from vllm.model_executor.layers.logits_processor import LogitsProcessor
+
+local_argmax_api = hasattr(LogitsProcessor, "get_shard_logits") and hasattr(
+    LogitsProcessor, "get_top_tokens"
+)
+print("dspark_local_argmax_api", local_argmax_api)
 
 print("SM80 runtime verification: OK")
