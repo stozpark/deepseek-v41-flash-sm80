@@ -1,16 +1,18 @@
-# Optional definition-file form. The local Docker image must exist first:
-#   ./build_docker_cu129.sh
-# Then:
-#   apptainer build deepseek-v41-flash-sm80-cu129.sif Singularity.def
-Bootstrap: docker-daemon
-From: deepseek-v41-flash-sm80:cu129
+Bootstrap: docker
+From: vllm/vllm-openai:deepseekv41-flash-0909-cu129
 
 %labels
     Maintainer stozpark
     Model deepseek-ai/DeepSeek-V4.1-Flash
     GPU NVIDIA-A100-SM80
+    BaseImage vllm/vllm-openai:deepseekv41-flash-0909-cu129
     CUDA 12.9.1
-    BackportCommit 24cb31bb4fd0becee65c810c913a8caa4f610c36
+    SM80OverlayCommit 24cb31bb4fd0becee65c810c913a8caa4f610c36
+
+%files
+    patches/overlay/vllm /opt/sm80-overlay/vllm
+    patches/overlay/BACKPORT_COMMIT /opt/sm80-overlay/BACKPORT_COMMIT
+    patches/apply_overlay.py /opt/sm80-overlay/apply_overlay.py
 
 %environment
     export PYTHONUNBUFFERED=1
@@ -18,6 +20,25 @@ From: deepseek-v41-flash-sm80:cu129
     export TOKENIZERS_PARALLELISM=false
     export NCCL_ALGO=Ring
     export NCCL_PROTO=Simple
+
+%post
+    set -eu
+    python3 /opt/sm80-overlay/apply_overlay.py
+    python3 - <<'PY'
+import importlib.metadata as m
+import pathlib
+import vllm
+print("vllm", m.version("vllm"))
+for p in ("torch", "triton"):
+    try:
+        print(p, m.version(p))
+    except Exception as exc:
+        print(p, "unknown", exc)
+root = pathlib.Path(vllm.__file__).resolve().parent
+assert (root / "v1/attention/ops/fp8_sm80.py").exists()
+assert (root / "models/deepseek_v4_1/ampere/ampere_sparse.py").exists()
+print("SM80 overlay static verification: OK")
+PY
 
 %runscript
     exec "$@"

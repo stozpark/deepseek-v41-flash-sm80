@@ -1,126 +1,99 @@
-# DeepSeek-V4.1-Flash on A100/A800 — CUDA 12.9 branch
+# DeepSeek-V4.1-Flash on A100/A800 (SM80) - CUDA 12.9
 
-This `cu129` branch builds `deepseek-ai/DeepSeek-V4.1-Flash` for NVIDIA
-A100/A800 (SM80) using **CUDA 12.9.1** instead of the CUDA 13 image used by
-`main`.
+Run `deepseek-ai/DeepSeek-V4.1-Flash` on NVIDIA A100/A800 using a SIF built
+from the **official vLLM CUDA 12.9 DeepSeek-V4.1 image** plus a pinned Ampere
+overlay.
 
-## Why CUDA 12.9
-
-The pinned V4.1 Ampere port is `wtdcode/vllm-backport` commit:
+## Base
 
 ```text
-24cb31bb4fd0becee65c810c913a8caa4f610c36
+Official image : vllm/vllm-openai:deepseekv41-flash-0909-cu129
+CUDA in image  : 12.9.1
+GPU target     : A100/A800 (SM80)
+SM80 overlay   : wtdcode/vllm-backport@24cb31bb4fd0becee65c810c913a8caa4f610c36
+Output SIF     : deepseek-v41-flash-sm80-cu129.sif
 ```
 
-The same source tree has an official CUDA 12.9 release build path using
-`CUDA_VERSION=12.9.1` and the PyTorch CUDA 12.9 manylinux builder. CUDA 12.9 is
-also the relevant boundary for several current vLLM CUDA/FP4 build paths.
-Therefore this branch uses **12.9.1**, not 12.4.
+The CUDA 13 variant is on `main`.
 
-The SM80 DeepSeek V4.1 runtime changes are the same as `main`:
+## Why an overlay is still needed
 
-- Triton sparse MLA for SM8x
-- software E4M3 encode/decode on pre-SM89
-- 128-token V4.1 indexer pages
-- Engram CPU offload
-- DSpark-5 with local argmax reduction
+The official DeepSeek-V4.1 image supplies the model integration and native
+CUDA/PyTorch/vLLM stack. A100 still needs an Ampere execution path because
+native Triton FP8 E4M3 conversion requires SM89+ and the stock V4.1 sparse-MLA
+selection targets newer GPU backends.
 
-## Status
+The pinned overlay adds:
 
-- Source/build configuration: pinned to a known V4.1 SM80 backport and its
-  CUDA 12.9-supported build recipe.
-- A100 V4.1 model/runtime path: publicly exercised with the same backport line.
-- **This repository's CUDA-12.9 image itself has not been end-to-end executed on
-  an A100 by this repository yet.** Run `verify_runtime.py` and the smoke test
-  before treating it as production-qualified.
+- SM8x `TRITON_MLA_SPARSE_DSV41` routing
+- software E4M3 encode/decode for FP8 cache operations below SM89
+- V4.1 128-token indexer pages
+- CUDA-capable Triton sparse-MLA path
+- pre-SM89 JIT warmup fixes
+- DSpark V4.1 hooks from the validated A100 backport pin
 
-## Driver compatibility
+The official image's compiled native extensions remain in place. See
+[`patches/OVERLAY_MANIFEST.md`](patches/OVERLAY_MANIFEST.md).
 
-NVIDIA documents CUDA 12.x minor-version compatibility for drivers **>= 525**
-(and the 525–579 range is the CUDA-12 minor-compatibility range). Therefore an
-R550 data-center driver is in the supported range for CUDA 12.x.
-
-There are still NVIDIA caveats: features that require a newer driver and PTX
-that a driver cannot JIT may need a driver upgrade. This build explicitly
-compiles for **SM80** to minimize dependence on generic forward-PTX paths.
-
-## Hardware baseline
-
-```text
-GPU:       A100/A800 80GB x8
-Parallel:  TP8
-Host RAM:  256 GiB minimum practical target; 384 GiB+ preferred
-Model:     official deepseek-ai/DeepSeek-V4.1-Flash
-CUDA:      12.9.1
-```
-
-Engram CPU offload is roughly 196 GB, so host RAM matters.
-
-## 1. Check the machine
+## Build the SIF
 
 ```bash
-./preflight.sh
-```
-
-## 2. Build the CUDA 12.9 Docker image
-
-```bash
-./build_docker_cu129.sh
-```
-
-Default local image name:
-
-```text
-deepseek-v41-flash-sm80:cu129
-```
-
-The script checks out the exact backport commit and builds its upstream
-`docker/Dockerfile` with:
-
-```text
-CUDA_VERSION=12.9.1
-BUILD_BASE_IMAGE=pytorch/manylinux2_28-builder:cuda12.9-78e737ad29420ffc4800e677c51e2a852caf8359
-TORCH_CUDA_ARCH_LIST=8.0
-```
-
-To reuse an already checked-out source tree:
-
-```bash
-SOURCE_DIR=/path/to/vllm-backport ./build_docker_cu129.sh
-```
-
-## 3-A. Run with Docker
-
-```bash
-MODEL_PATH=/models/DeepSeek-V4.1-Flash \
-./serve_docker_a100.sh
-```
-
-## 3-B. Convert the local image to Singularity/Apptainer
-
-```bash
+git clone https://github.com/stozpark/deepseek-v41-flash-sm80.git
+cd deepseek-v41-flash-sm80
+git checkout cu129
 ./build_sif.sh
 ```
 
-Output:
+Result:
 
 ```text
 deepseek-v41-flash-sm80-cu129.sif
 ```
 
-The conversion uses Apptainer/Singularity's `docker-daemon:` transport, so the
-local Docker image must already exist and the user must be able to access the
-Docker daemon.
+Use an existing backport checkout if desired:
 
-Then serve:
+```bash
+BACKPORT_SOURCE=/path/to/vllm-backport ./build_sif.sh
+```
+
+Or prepare the overlay once and build without another Git fetch:
+
+```bash
+BACKPORT_SOURCE=/path/to/vllm-backport ./prepare_sm80_overlay.sh
+SKIP_OVERLAY_PREPARE=1 ./build_sif.sh
+```
+
+The generated `patches/overlay/` and `*.sif` are git-ignored.
+
+If fakeroot is unavailable:
+
+```bash
+BUILD_ARGS="" ./build_sif.sh
+```
+
+## Preflight
+
+```bash
+./preflight.sh
+```
+
+Recommended starting point:
+
+```text
+GPU      : 8 x A100 80GB
+Host RAM : 384 GiB+ preferred (256 GiB is tight)
+TP       : 8
+Context  : 256K first
+```
+
+## Serve
 
 ```bash
 MODEL_PATH=/models/DeepSeek-V4.1-Flash \
-SIF_PATH=./deepseek-v41-flash-sm80-cu129.sif \
 ./serve_tp8_a100.sh
 ```
 
-## 4. Default serving configuration
+Defaults:
 
 ```text
 TP                         8
@@ -128,68 +101,26 @@ max_model_len              262144
 max_num_seqs               16
 max_num_batched_tokens     16384
 gpu_memory_utilization     0.90
-KV cache                    fp8_ds_mla
-Engram                      CPU offload
-Prefix cache                on
-DSpark                      5 tokens
-CUDA graph                  FULL_AND_PIECEWISE
-Custom all-reduce           off
-NCCL                        Ring / Simple
+KV cache                   fp8_ds_mla
+Engram                     CPU offload
+Prefix caching             enabled
+DSpark                     5 speculative tokens
+CUDA graph                 FULL_AND_PIECEWISE
+custom all-reduce          disabled
 ```
 
-If startup/debugging fails, first remove speculative decoding:
+Debug startup without speculative decoding:
 
 ```bash
 DISABLE_DSPARK=1 MODEL_PATH=/models/DeepSeek-V4.1-Flash ./serve_tp8_a100.sh
 ```
 
-After the baseline works, enable DSpark again.
-
-## 5. Verify that the image is really CUDA 12.9 + SM80-capable
-
-Docker:
+## Verify inside the SIF
 
 ```bash
-docker run --rm --gpus all \
-  -v "$PWD/verify_runtime.py:/tmp/verify_runtime.py:ro" \
-  --entrypoint python3 \
-  deepseek-v41-flash-sm80:cu129 /tmp/verify_runtime.py
+apptainer exec --nv deepseek-v41-flash-sm80-cu129.sif \
+  python3 verify_runtime.py
 ```
 
-SIF:
-
-```bash
-apptainer exec --nv \
-  --bind "$PWD/verify_runtime.py:/tmp/verify_runtime.py:ro" \
-  deepseek-v41-flash-sm80-cu129.sif \
-  python3 /tmp/verify_runtime.py
-```
-
-The verifier checks:
-
-- `torch.version.cuda` begins with `12.9`
-- visible GPU capability is SM80 when a GPU is attached
-- DeepSeek-V4.1 model code exists
-- the Ampere sparse backend file exists
-
-## 6. API smoke test
-
-After the server starts:
-
-```bash
-./smoke_test.sh
-```
-
-## Why not CUDA 12.4?
-
-This branch intentionally does not claim CUDA 12.4 support. The current vLLM
-source has build components whose supported/optimized path is gated at CUDA
-12.9, while its release tooling explicitly builds CUDA 12.9.1. Using the
-project's existing 12.9 release path is materially safer than inventing an
-unvalidated 12.4 patch set.
-
-## Patch lineage
-
-See [`patches/SM80_PATCHSET.md`](patches/SM80_PATCHSET.md). The CUDA version is
-changed here; the DeepSeek-V4.1 Ampere model/runtime patch lineage remains the
-same.
+This branch is the preferred starting point for A100 systems that cannot run
+the CUDA 13 official image directly.

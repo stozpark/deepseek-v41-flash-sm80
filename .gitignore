@@ -1,10 +1,7 @@
 *.sif
 *.log
 *.pid
-*.tar
-*.tar.gz
 __pycache__/
 .env
 .cache/
-.build/
-vllm-backport-src/
+patches/overlay/
