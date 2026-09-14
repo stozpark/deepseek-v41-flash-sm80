@@ -49,7 +49,7 @@ def replace_once(path: Path, old: str, new: str, description: str) -> None:
 
 
 # Dependency closure for the SM80 sparse-indexer query/decode sharding added
-# by wtdcode/vllm-backport a6ef07a + 6793ead.  The official 0909 image predates
+# by wtdcode/vllm-backport a6ef07a + 6793ead. The official 0909 image predates
 # these two shared helpers, while the pinned SM80 indexer imports them.
 # Keep the official distributed/utils.py otherwise untouched.
 dist_utils = DST / "distributed/utils.py"
@@ -75,10 +75,10 @@ replace_once(
     "DeepSeek-V4.1 Responses API text-content hotfix",
 )
 
-# Post-0909 fix corresponding to vLLM PR #56623.  A V4.1 vision-capable
+# Post-0909 fix corresponding to vLLM PR #56623. A V4.1 vision-capable
 # checkpoint served with --language-model-only must not reserve the extra
-# vision-visible SWA width (1024 tokens for V4.1-Flash).  This is useful on
-# SM80 too: it avoids unnecessary metadata/index bandwidth.  If multimodal
+# vision-visible SWA width (1024 tokens for V4.1-Flash). This is useful on
+# SM80 too: it avoids unnecessary metadata/index bandwidth. If multimodal
 # config is absent or language_model_only is false, behavior is unchanged.
 sparse_swa = DST / "v1/attention/backends/mla/sparse_swa.py"
 replace_once(
@@ -94,6 +94,24 @@ replace_once(
     '''        self.max_image_tokens = (\n            getattr(config, "vision_max_n_token", 0)\n            if getattr(config, "vision_n_layers", 0) > 0\n            else 0\n        )''',
     '''        mm_config = getattr(vllm_config.model_config, "multimodal_config", None)\n        language_model_only = bool(getattr(mm_config, "language_model_only", False))\n        self.max_image_tokens = (\n            0\n            if language_model_only\n            else (\n                getattr(config, "vision_max_n_token", 0)\n                if getattr(config, "vision_n_layers", 0) > 0\n                else 0\n            )\n        )''',
     "DeepSeek-V4.1 attention language-model-only SWA-width hotfix",
+)
+
+# SM80 mHC correctness: the 0909 branch's first-layer broadcast path invokes
+# DeepGEMM unconditionally, but DeepGEMM's mHC kernel is Hopper+ only. The
+# backport fix (later upstreamed as the SM8x MHC guard) uses the already-present
+# TileLang prenorm GEMM when DeepGEMM is unsupported.
+mhc_tilelang = DST / "model_executor/kernels/mhc/tilelang.py"
+replace_once(
+    mhc_tilelang,
+    '''    n_splits = compute_num_split(64, hidden_size, cdiv(num_tokens, 64))''',
+    '''    from vllm.utils.deep_gemm import is_deep_gemm_supported\n\n    use_deep_gemm = is_deep_gemm_supported()\n    if use_deep_gemm:\n        n_splits = compute_num_split(64, hidden_size, cdiv(num_tokens, 64))\n    else:\n        n_splits = 1''',
+    "SM80 mHC broadcast DeepGEMM guard",
+)
+replace_once(
+    mhc_tilelang,
+    '''    from vllm.utils.deep_gemm import tf32_hc_prenorm_gemm\n\n    tf32_hc_prenorm_gemm(\n        residual_flat,\n        fn_broadcast,\n        gemm_out_mul,\n        gemm_out_sqrsum,\n        n_splits,\n    )''',
+    '''    if use_deep_gemm:\n        from vllm.utils.deep_gemm import tf32_hc_prenorm_gemm\n\n        tf32_hc_prenorm_gemm(\n            residual_flat,\n            fn_broadcast,\n            gemm_out_mul,\n            gemm_out_sqrsum,\n            n_splits,\n        )\n    else:\n        _tilelang_hc_prenorm_gemm(\n            residual_flat,\n            fn_broadcast,\n            gemm_out_mul,\n            gemm_out_sqrsum,\n            hidden_size,\n            1,\n        )''',
+    "SM80 mHC broadcast TileLang fallback",
 )
 
 required_overlay = [
@@ -124,6 +142,7 @@ marker.write_text(
     "balanced_row_helpers=1\n"
     "responses_api_text_hotfix=1\n"
     "language_model_only_swa_hotfix=1\n"
+    "mhc_sm80_fallback=1\n"
     "mqa_long_context_guards=1\n",
     encoding="utf-8",
 )
