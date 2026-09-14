@@ -11,7 +11,9 @@ OVERLAY_DIR="${ROOT_DIR}/patches/overlay"
 required=(
   "${VENDOR_DIR}/BACKPORT_COMMIT"
   "${VENDOR_DIR}/SHA256SUMS"
+  "${VENDOR_DIR}/vllm/model_executor/kernels/linear/gemv_triton.py"
   "${VENDOR_DIR}/vllm/v1/attention/ops/fp8_sm80.py"
+  "${VENDOR_DIR}/vllm/v1/attention/ops/mqa_logits_triton.py"
   "${VENDOR_DIR}/vllm/models/deepseek_v4_1/ampere/ampere_sparse.py"
   "${VENDOR_DIR}/vllm/v1/attention/backends/mla/indexer.py"
 )
