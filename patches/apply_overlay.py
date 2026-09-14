@@ -98,7 +98,7 @@ replace_once(
 
 # SM80 mHC correctness: the 0909 branch's first-layer broadcast path invokes
 # DeepGEMM unconditionally, but DeepGEMM's mHC kernel is Hopper+ only. The
-# backport fix (later upstreamed as the SM8x MHC guard) uses the already-present
+# backport fix (later upstreamed as vLLM #50645) uses the already-present
 # TileLang prenorm GEMM when DeepGEMM is unsupported.
 mhc_tilelang = DST / "model_executor/kernels/mhc/tilelang.py"
 replace_once(
@@ -113,6 +113,44 @@ replace_once(
     '''    if use_deep_gemm:\n        from vllm.utils.deep_gemm import tf32_hc_prenorm_gemm\n\n        tf32_hc_prenorm_gemm(\n            residual_flat,\n            fn_broadcast,\n            gemm_out_mul,\n            gemm_out_sqrsum,\n            n_splits,\n        )\n    else:\n        _tilelang_hc_prenorm_gemm(\n            residual_flat,\n            fn_broadcast,\n            gemm_out_mul,\n            gemm_out_sqrsum,\n            hidden_size,\n            1,\n        )''',
     "SM80 mHC broadcast TileLang fallback",
 )
+
+# vLLM #53376: CUTLASS FP8 auto-selection must decline SM80. Without this,
+# mixed FP8 linear layers can choose a CUTLASS kernel that has no Ampere
+# implementation instead of falling through to the intended Marlin fallback.
+cutlass_fp8 = DST / "model_executor/kernels/linear/scaled_mm/cutlass.py"
+replace_once(
+    cutlass_fp8,
+    '''        if not current_platform.is_cuda():\n            return False, "requires CUDA."\n        return True, None''',
+    '''        if not current_platform.is_cuda():\n            return False, "requires CUDA."\n        if compute_capability is None:\n            capability_tuple = current_platform.get_device_capability()\n            compute_capability = (\n                -1 if capability_tuple is None else capability_tuple.to_int()\n            )\n        if not ops.cutlass_scaled_mm_supports_fp8(compute_capability):\n            return (\n                False,\n                "CUTLASS FP8 GEMM is unavailable for compute capability "\n                f"{compute_capability} with this CUDA build (needs SM89 with "\n                "CUDA 12.4 or newer, or SM90+ with CUDA 12.0 or newer).",\n            )\n        return True, None''',
+    "SM80 CUTLASS FP8 capability gate",
+)
+
+# vLLM #55109: narrowed block-table views retain the backing tensor's larger
+# row stride. The pinned SM80 gather kernel used shape[-1], so request 2+
+# could read the wrong physical block and issue an OOB access. V4 and V4.1
+# carry separate copies of this kernel in the pinned tree; fix both.
+for cache_utils in (
+    DST / "models/deepseek_v4/common/ops/cache_utils.py",
+    DST / "models/deepseek_v4_1/common/ops/cache_utils.py",
+):
+    replace_once(
+        cache_utils,
+        "    max_blocks_per_seq: tl.constexpr,\n",
+        "    block_table_stride: tl.constexpr,\n",
+        "K-cache gather physical block-table stride parameter",
+    )
+    replace_once(
+        cache_utils,
+        "block_table_row_ptr = block_table_ptr + batch_idx * max_blocks_per_seq",
+        "block_table_row_ptr = block_table_ptr + batch_idx * block_table_stride",
+        "K-cache gather physical block-table row addressing",
+    )
+    replace_once(
+        cache_utils,
+        "        max_blocks_per_seq=block_table.shape[-1],\n",
+        "        block_table_stride=block_table.stride(0),\n",
+        "K-cache gather physical block-table stride launch",
+    )
 
 required_overlay = [
     DST / "v1/attention/ops/fp8_sm80.py",
@@ -133,6 +171,14 @@ for required in (".to(tl.int64)", "k_offset < context_len"):
             + required
         )
 
+# The pinned backport already contains the fourth #50576 correctness fix:
+# fused inverse-RoPE passes launch_pdl in both the kernel dispatcher and wrapper.
+inv_rope = (DST / "models/deepseek_v4/common/ops/fused_inv_rope_fp8_quant.py").read_text(
+    encoding="utf-8"
+)
+if inv_rope.count("launch_pdl=launch_pdl") < 2:
+    raise SystemExit("fused_inv_rope_fp8_quant is missing the launch_pdl fix")
+
 if not compileall.compile_dir(str(DST), quiet=1, force=False):
     raise SystemExit("Python compile check failed after SM80 overlay")
 
@@ -143,7 +189,10 @@ marker.write_text(
     "responses_api_text_hotfix=1\n"
     "language_model_only_swa_hotfix=1\n"
     "mhc_sm80_fallback=1\n"
-    "mqa_long_context_guards=1\n",
+    "cutlass_fp8_sm80_gate=1\n"
+    "strided_block_table_gather=1\n"
+    "mqa_long_context_guards=1\n"
+    "launch_pdl_fix_present=1\n",
     encoding="utf-8",
 )
 print(f"Applied {copied} SM80 overlay files to {DST}")
