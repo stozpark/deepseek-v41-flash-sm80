@@ -1,0 +1,84 @@
+name: audit-official-image
+
+on:
+  push:
+    branches: [audit-sm80]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cu129-import-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pull official DeepSeek V4.1 CUDA 12.9 image
+        run: docker pull vllm/vllm-openai:deepseekv41-flash-0909-cu129
+
+      - name: Apply current vendored SM80 overlay and inspect imports
+        run: |
+          docker run --rm \
+            -v "$PWD:/work" \
+            -w /work \
+            vllm/vllm-openai:deepseekv41-flash-0909-cu129 \
+            bash -lc '
+              set -euxo pipefail
+              rm -rf /opt/sm80-overlay
+              mkdir -p /opt/sm80-overlay
+              cp -a /work/patches/vendor/vllm /opt/sm80-overlay/vllm
+              cp /work/patches/apply_overlay.py /opt/sm80-overlay/apply_overlay.py
+              python3 /opt/sm80-overlay/apply_overlay.py
+              python3 - <<"PY"
+import importlib
+import importlib.metadata as md
+print("vllm", md.version("vllm"))
+mods = [
+  "vllm.models.deepseek_v4_1",
+  "vllm.models.deepseek_v4_1.quant_config",
+  "vllm.models.deepseek_v4_1.attention",
+  "vllm.models.deepseek_v4_1.common.engram",
+  "vllm.models.deepseek_v4_1.nvidia.model",
+  "vllm.models.deepseek_v4_1.ampere.ampere_sparse",
+  "vllm.v1.attention.backends.mla.indexer",
+  "vllm.v1.attention.ops.rocm_aiter_mla_sparse",
+]
+for name in mods:
+    print("IMPORT", name)
+    importlib.import_module(name)
+print("DIRECT IMPORTS OK")
+from vllm.model_executor.models.registry import ModelRegistry
+m = ModelRegistry.models["DeepseekV41ForCausalLM"]
+cls = m.load_model_cls()
+print("MODEL CLS", cls)
+info = m.inspect_model_cls()
+print("MODEL INSPECT OK", info)
+PY
+            '
+
+      - name: Check for backport-only shared API references
+        run: |
+          docker run --rm \
+            -v "$PWD:/work" \
+            -w /work \
+            vllm/vllm-openai:deepseekv41-flash-0909-cu129 \
+            bash -lc '
+              set -euxo pipefail
+              python3 - <<"PY"
+from pathlib import Path
+import ast
+root=Path("/work/patches/vendor/vllm")
+imports=[]
+for p in root.rglob("*.py"):
+    try: tree=ast.parse(p.read_text())
+    except Exception: continue
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom) and n.module and n.module.startswith("vllm."):
+            imports.append((str(p.relative_to(root)), n.module, [a.name for a in n.names]))
+print("vendored vllm imports", len(imports))
+for x in imports:
+    print(x)
+PY
+            '
