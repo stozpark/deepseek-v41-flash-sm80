@@ -2,49 +2,49 @@
 from __future__ import annotations
 
 import importlib.metadata as md
-import pathlib
-import sys
+from pathlib import Path
 
+import torch
+import vllm
 
-def version(name: str) -> str:
-    try:
-        return md.version(name)
-    except Exception:
-        return "unknown"
+root = Path(vllm.__file__).resolve().parent
+required = [
+    root / "v1/attention/ops/fp8_sm80.py",
+    root / "models/deepseek_v4/ampere/ampere_sparse.py",
+    root / "models/deepseek_v4_1/ampere/ampere_sparse.py",
+    root / "v1/attention/backends/mla/indexer.py",
+]
+missing = [str(p) for p in required if not p.exists()]
+if missing:
+    raise SystemExit(f"ERROR: missing SM80 overlay files: {missing}")
 
+from vllm.v1.attention.backends.registry import AttentionBackendEnum
 
-print("python:", sys.version.replace("\n", " "))
-print("torch :", version("torch"))
-print("triton:", version("triton"))
-print("vllm  :", version("vllm"))
+if not hasattr(AttentionBackendEnum, "TRITON_MLA_SPARSE_DSV41"):
+    raise SystemExit("ERROR: TRITON_MLA_SPARSE_DSV41 is not registered")
 
+print("vllm", md.version("vllm"))
+print("torch", torch.__version__)
+print("torch.version.cuda", torch.version.cuda)
 try:
-    import torch
+    print("triton", md.version("triton"))
+except Exception:
+    pass
+print("vllm_root", root)
 
-    print("torch.cuda:", torch.version.cuda)
-    print("cuda available:", torch.cuda.is_available())
-    if torch.cuda.is_available():
-        for i in range(torch.cuda.device_count()):
-            print(i, torch.cuda.get_device_name(i), torch.cuda.get_device_capability(i))
-            if torch.cuda.get_device_capability(i) != (8, 0):
-                print(f"WARN: GPU {i} is not SM80", file=sys.stderr)
-except Exception as e:
-    print("ERROR importing torch:", repr(e), file=sys.stderr)
+if not torch.cuda.is_available():
+    raise SystemExit("ERROR: CUDA unavailable; run this inside the SIF with --nv")
 
-try:
-    import vllm
+for idx in range(torch.cuda.device_count()):
+    name = torch.cuda.get_device_name(idx)
+    cap = torch.cuda.get_device_capability(idx)
+    print(f"gpu[{idx}]={name} capability={cap[0]}.{cap[1]}")
+    if cap[0] != 8:
+        raise SystemExit(f"ERROR: GPU {idx} is not SM8x: {cap}")
 
-    root = pathlib.Path(vllm.__file__).resolve().parent
-    must_exist = [
-        root / "models" / "deepseek_v4_1",
-        root / "models" / "deepseek_v4_1" / "ampere" / "ampere_sparse.py",
-    ]
-    for p in must_exist:
-        print("check:", p, "OK" if p.exists() else "MISSING")
-        if not p.exists():
-            raise SystemExit(2)
-except Exception as e:
-    print("ERROR checking vLLM V4.1 SM80 files:", repr(e), file=sys.stderr)
-    raise
+from vllm.models.deepseek_v4_1.ampere.ampere_sparse import (
+    DeepseekV41AmpereMLASparseBackend,
+)
 
-print("runtime verification: OK")
+print("backend", DeepseekV41AmpereMLASparseBackend.get_name())
+print("SM80 runtime verification: OK")

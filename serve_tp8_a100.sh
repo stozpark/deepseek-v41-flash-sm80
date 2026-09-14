@@ -2,11 +2,14 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SIF_PATH="${SIF_PATH:-${ROOT_DIR}/deepseek-v41-flash-sm80-cu130.sif}"
-MODEL_PATH="${MODEL_PATH:-deepseek-ai/DeepSeek-V4.1-Flash}"
+# shellcheck disable=SC1091
+source "${ROOT_DIR}/VERSION.env"
+SIF_PATH="${SIF_PATH:-${ROOT_DIR}/${SIF_NAME}}"
+MODEL_PATH="${MODEL_PATH:-${MODEL_ID}}"
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-18005}"
 SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-deepseek-v4.1-flash}"
+TP_SIZE="${TP_SIZE:-8}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-262144}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-16}"
@@ -23,7 +26,6 @@ else
   echo "ERROR: apptainer/singularity not found." >&2
   exit 1
 fi
-
 [[ -f "$SIF_PATH" ]] || { echo "ERROR: SIF not found: $SIF_PATH" >&2; exit 1; }
 
 export CUDA_VISIBLE_DEVICES
@@ -36,7 +38,7 @@ ARGS=(
   --host "$HOST"
   --port "$PORT"
   --served-model-name "$SERVED_MODEL_NAME"
-  --tensor-parallel-size 8
+  --tensor-parallel-size "$TP_SIZE"
   --max-model-len "$MAX_MODEL_LEN"
   --max-num-seqs "$MAX_NUM_SEQS"
   --max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS"
@@ -61,18 +63,16 @@ fi
 
 BIND_ARGS=()
 if [[ -e "$MODEL_PATH" ]]; then
-  MODEL_REAL="$(readlink -f "$MODEL_PATH")"
-  MODEL_PATH="$MODEL_REAL"
+  MODEL_PATH="$(readlink -f "$MODEL_PATH")"
   ARGS[2]="$MODEL_PATH"
   BIND_ARGS+=(--bind "$MODEL_PATH:$MODEL_PATH")
 fi
-
 if [[ -n "${HF_HOME:-}" && -d "${HF_HOME}" ]]; then
   HF_REAL="$(readlink -f "$HF_HOME")"
   BIND_ARGS+=(--bind "$HF_REAL:$HF_REAL")
 fi
 
-echo "[serve] GPUs=$CUDA_VISIBLE_DEVICES TP=8 max_len=$MAX_MODEL_LEN max_seqs=$MAX_NUM_SEQS"
+echo "[sif]   $SIF_PATH"
+echo "[serve] GPUs=$CUDA_VISIBLE_DEVICES TP=$TP_SIZE max_len=$MAX_MODEL_LEN max_seqs=$MAX_NUM_SEQS"
 echo "[serve] model=$MODEL_PATH port=$PORT ep=$ENABLE_EXPERT_PARALLEL dspark=$((1-DISABLE_DSPARK))"
-
 exec "$RUNNER" exec --nv "${BIND_ARGS[@]}" "$SIF_PATH" "${ARGS[@]}"
