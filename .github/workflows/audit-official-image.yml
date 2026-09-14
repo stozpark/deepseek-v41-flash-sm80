@@ -30,10 +30,11 @@ jobs:
       - name: Apply SM80 overlay and run compatibility audit
         run: |
           docker run --rm \
+            --entrypoint bash \
             -v "$PWD:/work" \
             -w /work \
             vllm/vllm-openai:deepseekv41-flash-0909-cu129 \
-            bash -lc 'set -euxo pipefail; \
+            -lc 'set -euxo pipefail; \
               rm -rf /opt/sm80-overlay; \
               mkdir -p /opt/sm80-overlay; \
               cp -a /work/patches/vendor/vllm /opt/sm80-overlay/vllm; \
