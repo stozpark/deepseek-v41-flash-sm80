@@ -3,7 +3,7 @@ name: Vendor SM80 runtime
 on:
   workflow_dispatch:
   push:
-    branches: [main, audit-sm80]
+    branches: [main, cu129, audit-sm80]
     paths:
       - '.github/workflows/vendor-sm80.yml'
       - 'VERSION.env'
@@ -48,6 +48,7 @@ jobs:
           paths=(
             vllm/models/deepseek_v4
             vllm/models/deepseek_v4_1
+            vllm/model_executor/kernels/linear/gemv_triton.py
             vllm/model_executor/layers/sparse_attn_indexer.py
             vllm/model_executor/warmup/cutedsl_warmup.py
             vllm/model_executor/warmup/flashinfer_sparse_mla_warmup.py
@@ -74,6 +75,7 @@ jobs:
             find vllm -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
           )
 
+          test -f patches/vendor/vllm/model_executor/kernels/linear/gemv_triton.py
           test -f patches/vendor/vllm/v1/attention/ops/fp8_sm80.py
           test -f patches/vendor/vllm/v1/attention/ops/mqa_logits_triton.py
           test -f patches/vendor/vllm/models/deepseek_v4_1/ampere/ampere_sparse.py
@@ -92,5 +94,5 @@ jobs:
             echo "Vendor snapshot already current."
             exit 0
           fi
-          git commit -m "Vendor missing SM80 indexer runtime dependency"
+          git commit -m "Vendor complete SM80 runtime dependency closure"
           git push origin "HEAD:${GITHUB_REF_NAME}"
