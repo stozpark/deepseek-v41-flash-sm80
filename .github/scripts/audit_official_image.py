@@ -12,6 +12,21 @@ for pkg in ("vllm", "torch", "triton", "transformers"):
     except Exception as exc:
         print(pkg, "unknown", exc)
 
+# GitHub-hosted runners have no NVIDIA driver. vLLM intentionally sets
+# vllm.triton_utils.{triton,tl}=None in that environment, which prevents even
+# import-only inspection of our Python/Triton modules. Restore the installed
+# Triton Python modules for this audit only. We never launch a Triton kernel
+# here; physical SM80 execution is covered by verify_runtime.py on the A100.
+import triton as _triton
+import triton.language as _tl
+import vllm.triton_utils as _vtu
+
+if getattr(_vtu, "triton", None) is None:
+    _vtu.triton = _triton
+if getattr(_vtu, "tl", None) is None:
+    _vtu.tl = _tl
+print("TRITON IMPORT SHIM OK")
+
 print("=== shared SM80 dependency helpers ===")
 from vllm.distributed.utils import balanced_row_bounds, balanced_row_counts
 
@@ -75,18 +90,41 @@ for p in required:
     print(p, p.exists())
     assert p.exists(), p
 
+# SM80 paged-indexer long-context correctness (#50576 / #55184 stack).
 mqa_text = (root / "v1/attention/ops/mqa_logits_triton.py").read_text()
 assert ".to(tl.int64)" in mqa_text
 assert "k_offset < context_len" in mqa_text
 
+# --language-model-only must not keep the vision-only SWA width (#56623).
 swa_text = (root / "v1/attention/backends/mla/sparse_swa.py").read_text()
 v41_attn_text = (root / "models/deepseek_v4_1/attention.py").read_text()
-assert 'language_model_only = bool(getattr(mm_config, "language_model_only", False))' in swa_text
-assert 'language_model_only = bool(getattr(mm_config, "language_model_only", False))' in v41_attn_text
+needle = 'language_model_only = bool(getattr(mm_config, "language_model_only", False))'
+assert needle in swa_text
+assert needle in v41_attn_text
 
+# Pre-Hopper mHC must not unconditionally enter DeepGEMM (#50645).
 mhc_text = (root / "model_executor/kernels/mhc/tilelang.py").read_text()
 assert "use_deep_gemm = is_deep_gemm_supported()" in mhc_text
 assert "_tilelang_hc_prenorm_gemm(" in mhc_text
-print("SM80 SOURCE INVARIANTS OK")
 
+# SM80 FP8 linear auto-selection must reject unsupported CUTLASS and fall
+# through to Marlin (#53376).
+cutlass_text = (root / "model_executor/kernels/linear/scaled_mm/cutlass.py").read_text()
+assert "cutlass_scaled_mm_supports_fp8(compute_capability)" in cutlass_text
+
+# Narrowed block-table views must use their physical row stride (#55109).
+for rel in (
+    "models/deepseek_v4/common/ops/cache_utils.py",
+    "models/deepseek_v4_1/common/ops/cache_utils.py",
+):
+    text = (root / rel).read_text()
+    assert "batch_idx * block_table_stride" in text, rel
+    assert "block_table_stride=block_table.stride(0)" in text, rel
+    assert "max_blocks_per_seq=block_table.shape[-1]" not in text, rel
+
+# The pinned backport already contains the launch_pdl correctness fix.
+inv_rope = (root / "models/deepseek_v4/common/ops/fused_inv_rope_fp8_quant.py").read_text()
+assert inv_rope.count("launch_pdl=launch_pdl") >= 2
+
+print("SM80 SOURCE INVARIANTS OK")
 print("OFFICIAL IMAGE COMPATIBILITY AUDIT OK")
