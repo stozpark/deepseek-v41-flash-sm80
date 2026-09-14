@@ -3,7 +3,7 @@ name: Vendor SM80 runtime
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, audit-sm80]
     paths:
       - '.github/workflows/vendor-sm80.yml'
       - 'VERSION.env'
@@ -57,6 +57,7 @@ jobs:
             vllm/v1/attention/backends/mla/rocm_aiter_mla_sparse.py
             vllm/v1/attention/ops/common.py
             vllm/v1/attention/ops/fp8_sm80.py
+            vllm/v1/attention/ops/mqa_logits_triton.py
             vllm/v1/attention/ops/rocm_aiter_mla_sparse.py
             vllm/v1/attention/ops/triton_reshape_and_cache_flash.py
           )
@@ -74,7 +75,10 @@ jobs:
           )
 
           test -f patches/vendor/vllm/v1/attention/ops/fp8_sm80.py
+          test -f patches/vendor/vllm/v1/attention/ops/mqa_logits_triton.py
           test -f patches/vendor/vllm/models/deepseek_v4_1/ampere/ampere_sparse.py
+          grep -q 'to(tl.int64)' patches/vendor/vllm/v1/attention/ops/mqa_logits_triton.py
+          grep -q 'k_offset < context_len' patches/vendor/vllm/v1/attention/ops/mqa_logits_triton.py
           test -s patches/vendor/SHA256SUMS
 
       - name: Commit vendored files
@@ -88,5 +92,5 @@ jobs:
             echo "Vendor snapshot already current."
             exit 0
           fi
-          git commit -m "Vendor pinned SM80 runtime sources"
-          git push origin HEAD:main
+          git commit -m "Vendor missing SM80 indexer runtime dependency"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
