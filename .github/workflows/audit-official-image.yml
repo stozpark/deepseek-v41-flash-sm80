@@ -61,12 +61,13 @@ jobs:
             vllm/vllm-openai:deepseekv41-flash-0909-cu129 \
             -lc 'set -euxo pipefail; \
               root="$(python3 -c "import pathlib,vllm; print(pathlib.Path(vllm.__file__).resolve().parent)")"; \
-              if command -v patch >/dev/null 2>&1; then \
-                patch --batch --forward -p1 -d "$root" < /work/.audit/sm80-cu129.patch; \
-              elif command -v git >/dev/null 2>&1; then \
+              if command -v git >/dev/null 2>&1; then \
                 cd "$root"; git apply --unsafe-paths /work/.audit/sm80-cu129.patch; cd /work; \
+              elif command -v patch >/dev/null 2>&1; then \
+                python3 -c "from pathlib import Path; import re; root=Path(\"$root\"); lines=Path(\"/work/.audit/sm80-cu129.patch\").read_text().splitlines(); [ (root / m.group(1)).parent.mkdir(parents=True, exist_ok=True) for line in lines if (m := re.match(r\"^\\+\\+\\+ b/(.+)$\", line)) ]"; \
+                patch --batch --forward -p1 -d "$root" < /work/.audit/sm80-cu129.patch; \
               else \
-                echo "ERROR: official image has neither patch nor git" >&2; exit 1; \
+                echo "ERROR: official image has neither git nor patch" >&2; exit 1; \
               fi; \
               python3 /work/.github/scripts/audit_official_image.py; \
               python3 /work/.github/scripts/snapshot_vllm_text.py /work/.audit/replayed'
