@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   cu129-import-audit:
@@ -74,6 +74,35 @@ jobs:
 
           diff -qr .audit/patched .audit/replayed
           echo "PATCH REPLAY IS BYTE-IDENTICAL TO PATCHED TEXT TREE"
+
+      - name: Publish verified compact patch
+        run: |
+          mkdir -p patches/generated
+          cp .audit/sm80-cu129.patch patches/generated/sm80-cu129.patch
+          awk '{print $1 "  sm80-cu129.patch"}' \
+            .audit/sm80-cu129.patch.sha256 \
+            > patches/generated/sm80-cu129.patch.sha256
+          cp .audit/patch-manifest.txt patches/generated/sm80-cu129.manifest.txt
+          cat > patches/generated/BASELINE.txt <<'EOF'
+          image=vllm/vllm-openai:deepseekv41-flash-0909-cu129
+          image_pull_digest=sha256:4a4431d6a283f7551c3d7a7d5efb905569328c665cb89512d7ba1280c4ca1957
+          installed_vllm=0.1.dev20904+g179dd0fa9.cu129
+          torch=2.13.0+cu129
+          triton=3.7.1
+          transformers=5.17.0
+          backport_source=wtdcode/vllm-backport
+          backport_pin=24cb31bb4fd0becee65c810c913a8caa4f610c36
+          EOF
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add patches/generated
+          if git diff --cached --quiet; then
+            echo "Verified compact patch is already committed."
+          else
+            git commit -m "Publish verified DeepSeek V4.1 SM80 cu129 patch"
+            git push origin HEAD:audit-sm80
+          fi
 
       - name: Upload compact patch audit artifact
         uses: actions/upload-artifact@v4
