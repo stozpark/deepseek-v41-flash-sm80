@@ -121,9 +121,11 @@ print("SM80 CAPABILITY GUARDS OK")
 print("=== DeepSeek V4.1 post-0909 correctness hotfixes ===")
 swa_text = (root / "v1/attention/backends/mla/sparse_swa.py").read_text(encoding="utf-8")
 v41_attn_text = (root / "models/deepseek_v4_1/attention.py").read_text(encoding="utf-8")
-needle = 'language_model_only = bool(getattr(mm_config, "language_model_only", False))'
-assert needle in swa_text
-assert needle in v41_attn_text
+assert "def swa_max_image_tokens(" in swa_text
+assert "self.max_image_tokens = swa_max_image_tokens(self.vllm_config)" in swa_text
+assert "swa_max_image_tokens" in v41_attn_text
+assert "self.max_image_tokens = swa_max_image_tokens(vllm_config)" in v41_attn_text
+assert "image_width = swa_max_image_tokens(vllm_config)" in v41_cache
 
 tokenizer_text = (root / "tokenizers/deepseek_v41.py").read_text(encoding="utf-8")
 assert 'part_type in ("text", "input_text", "output_text")' in tokenizer_text
