@@ -16,7 +16,9 @@ MAX_NUM_SEQS="${MAX_NUM_SEQS:-16}"
 MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-16384}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
 ENABLE_EXPERT_PARALLEL="${ENABLE_EXPERT_PARALLEL:-0}"
-DISABLE_DSPARK="${DISABLE_DSPARK:-0}"
+# Bring-up default: keep speculation off until the target model / SM80 kernels
+# are proven healthy. Enable explicitly with DISABLE_DSPARK=0 afterwards.
+DISABLE_DSPARK="${DISABLE_DSPARK:-1}"
 ENABLE_LOCAL_ARGMAX_REDUCTION="${ENABLE_LOCAL_ARGMAX_REDUCTION:-0}"
 ENABLE_VISION="${ENABLE_VISION:-0}"
 USE_RUST_FRONTEND="${USE_RUST_FRONTEND:-0}"
@@ -78,7 +80,8 @@ if [[ "$DISABLE_DSPARK" != "1" ]]; then
     ARGS+=(--speculative-config '{"method":"dspark","num_speculative_tokens":5,"use_local_argmax_reduction":true}')
   else
     # Full-vocab DSpark path: fewer cross-version shared-API dependencies and
-    # therefore the default for the 0909-official-image SM80 backport.
+    # therefore preferred when speculation is explicitly enabled on the
+    # 0909-official-image SM80 backport.
     ARGS+=(--speculative-config '{"method":"dspark","num_speculative_tokens":5}')
   fi
 fi
