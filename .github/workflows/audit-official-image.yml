@@ -27,7 +27,32 @@ jobs:
       - name: Pull official DeepSeek V4.1 CUDA 12.9 image
         run: docker pull vllm/vllm-openai:deepseekv41-flash-0909-cu129
 
-      - name: Apply SM80 overlay and run compatibility audit
+      - name: Apply vendored SM80 source and capture exact delta
+        run: |
+          rm -rf .audit
+          mkdir -p .audit
+          docker run --rm \
+            --entrypoint bash \
+            -v "$PWD:/work" \
+            -w /work \
+            vllm/vllm-openai:deepseekv41-flash-0909-cu129 \
+            -lc 'set -euxo pipefail; \
+              python3 /work/.github/scripts/snapshot_vllm_text.py /work/.audit/baseline; \
+              rm -rf /opt/sm80-overlay; \
+              mkdir -p /opt/sm80-overlay; \
+              cp -a /work/patches/vendor/vllm /opt/sm80-overlay/vllm; \
+              cp /work/patches/apply_overlay.py /opt/sm80-overlay/apply_overlay.py; \
+              python3 /opt/sm80-overlay/apply_overlay.py; \
+              python3 /work/.github/scripts/audit_official_image.py; \
+              python3 /work/.github/scripts/snapshot_vllm_text.py /work/.audit/patched'
+
+          python3 .github/scripts/make_patch_bundle.py \
+            .audit/baseline .audit/patched .audit/sm80-cu129.patch \
+            | tee .audit/patch-manifest.txt
+          sha256sum .audit/sm80-cu129.patch | tee .audit/sm80-cu129.patch.sha256
+          du -h .audit/sm80-cu129.patch
+
+      - name: Replay compact patch on a fresh official image
         run: |
           docker run --rm \
             --entrypoint bash \
@@ -35,9 +60,27 @@ jobs:
             -w /work \
             vllm/vllm-openai:deepseekv41-flash-0909-cu129 \
             -lc 'set -euxo pipefail; \
-              rm -rf /opt/sm80-overlay; \
-              mkdir -p /opt/sm80-overlay; \
-              cp -a /work/patches/vendor/vllm /opt/sm80-overlay/vllm; \
-              cp /work/patches/apply_overlay.py /opt/sm80-overlay/apply_overlay.py; \
-              python3 /opt/sm80-overlay/apply_overlay.py; \
-              python3 /work/.github/scripts/audit_official_image.py'
+              root="$(python3 -c "import pathlib,vllm; print(pathlib.Path(vllm.__file__).resolve().parent)")"; \
+              if command -v patch >/dev/null 2>&1; then \
+                patch --batch --forward -p1 -d "$root" < /work/.audit/sm80-cu129.patch; \
+              elif command -v git >/dev/null 2>&1; then \
+                cd "$root"; git apply --unsafe-paths /work/.audit/sm80-cu129.patch; cd /work; \
+              else \
+                echo "ERROR: official image has neither patch nor git" >&2; exit 1; \
+              fi; \
+              python3 /work/.github/scripts/audit_official_image.py; \
+              python3 /work/.github/scripts/snapshot_vllm_text.py /work/.audit/replayed'
+
+          diff -qr .audit/patched .audit/replayed
+          echo "PATCH REPLAY IS BYTE-IDENTICAL TO PATCHED TEXT TREE"
+
+      - name: Upload compact patch audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepseek-v41-sm80-cu129-patch-audit
+          path: |
+            .audit/sm80-cu129.patch
+            .audit/sm80-cu129.patch.sha256
+            .audit/patch-manifest.txt
+          if-no-files-found: error
+          retention-days: 7
