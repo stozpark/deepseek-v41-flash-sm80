@@ -10,8 +10,9 @@ From: vllm/vllm-openai:deepseekv41-flash-0909-cu129
     SM80OverlayCommit 24cb31bb4fd0becee65c810c913a8caa4f610c36
 
 %files
-    patches/overlay/vllm /opt/sm80-overlay/vllm
-    patches/overlay/BACKPORT_COMMIT /opt/sm80-overlay/BACKPORT_COMMIT
+    patches/vendor/vllm /opt/sm80-overlay/vllm
+    patches/vendor/BACKPORT_COMMIT /opt/sm80-overlay/BACKPORT_COMMIT
+    patches/vendor/SHA256SUMS /opt/sm80-overlay/SHA256SUMS
     patches/apply_overlay.py /opt/sm80-overlay/apply_overlay.py
 
 %environment
@@ -25,19 +26,11 @@ From: vllm/vllm-openai:deepseekv41-flash-0909-cu129
     set -eu
     python3 /opt/sm80-overlay/apply_overlay.py
     python3 - <<'PY'
-import importlib.metadata as m
-import pathlib
-import vllm
-print("vllm", m.version("vllm"))
-for p in ("torch", "triton"):
-    try:
-        print(p, m.version(p))
-    except Exception as exc:
-        print(p, "unknown", exc)
-root = pathlib.Path(vllm.__file__).resolve().parent
-assert (root / "v1/attention/ops/fp8_sm80.py").exists()
-assert (root / "models/deepseek_v4_1/ampere/ampere_sparse.py").exists()
-print("SM80 overlay static verification: OK")
+import pathlib, vllm
+root=pathlib.Path(vllm.__file__).resolve().parent
+assert (root/'v1/attention/ops/fp8_sm80.py').exists()
+assert (root/'models/deepseek_v4_1/ampere/ampere_sparse.py').exists()
+print('SM80 vendored overlay static verification: OK')
 PY
 
 %runscript
