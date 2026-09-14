@@ -1,0 +1,92 @@
+name: audit-minimal-sm80
+
+on:
+  push:
+    branches: [minimal-sm80]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  minimal-cu129-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free space
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet || true
+          sudo docker system prune -af || true
+          df -h /
+
+      - name: Pull verified official baseline
+        run: docker pull vllm/vllm-openai:deepseekv41-flash-0909-cu129
+
+      - name: Build minimal patched text tree from verified-full reference
+        run: |
+          set -euxo pipefail
+          rm -rf .minimal
+          mkdir -p .minimal
+
+          docker run --rm \
+            --entrypoint bash \
+            -v "$PWD:/work" -w /work \
+            vllm/vllm-openai:deepseekv41-flash-0909-cu129 \
+            -lc 'set -euxo pipefail; \
+              python3 /work/.github/scripts/snapshot_vllm_text.py /work/.minimal/baseline; \
+              root="$(python3 -c "import pathlib,vllm; print(pathlib.Path(vllm.__file__).resolve().parent)")"; \
+              python3 -c "from pathlib import Path; import re; root=Path(\"$root\"); lines=Path(\"/work/patches/generated/sm80-cu129.patch\").read_text().splitlines(); [ (root / m.group(1)).parent.mkdir(parents=True, exist_ok=True) for line in lines if (m := re.match(r\"^\\+\\+\\+ b/(.+)$\", line)) ]"; \
+              patch --batch --forward -p1 -d "$root" < /work/patches/generated/sm80-cu129.patch; \
+              python3 /work/.github/scripts/snapshot_vllm_text.py /work/.minimal/full'
+
+          python3 .github/scripts/minimize_patched_tree.py \
+            .minimal/baseline .minimal/full .minimal/minimal
+
+          python3 .github/scripts/make_patch_bundle.py \
+            .minimal/baseline .minimal/minimal .minimal/sm80-cu129-minimal.patch \
+            | tee .minimal/minimal-manifest.txt
+          sha256sum .minimal/sm80-cu129-minimal.patch \
+            | tee .minimal/sm80-cu129-minimal.patch.sha256
+          du -h .minimal/sm80-cu129-minimal.patch
+
+      - name: Replay minimal patch on fresh official image and audit
+        run: |
+          set -euxo pipefail
+          docker run --rm \
+            --entrypoint bash \
+            -v "$PWD:/work" -w /work \
+            vllm/vllm-openai:deepseekv41-flash-0909-cu129 \
+            -lc 'set -euxo pipefail; \
+              root="$(python3 -c "import pathlib,vllm; print(pathlib.Path(vllm.__file__).resolve().parent)")"; \
+              python3 -c "from pathlib import Path; import re; root=Path(\"$root\"); lines=Path(\"/work/.minimal/sm80-cu129-minimal.patch\").read_text().splitlines(); [ (root / m.group(1)).parent.mkdir(parents=True, exist_ok=True) for line in lines if (m := re.match(r\"^\\+\\+\\+ b/(.+)$\", line)) ]"; \
+              patch --batch --forward -p1 -d "$root" < /work/.minimal/sm80-cu129-minimal.patch; \
+              python3 /work/.github/scripts/audit_official_image.py; \
+              python3 /work/.github/scripts/snapshot_vllm_text.py /work/.minimal/replayed'
+
+          diff -qr .minimal/minimal .minimal/replayed
+          echo "MINIMAL PATCH REPLAY IS BYTE-IDENTICAL"
+
+      - name: Enforce reduction from verified-full patch
+        run: |
+          set -euxo pipefail
+          full_bytes=$(wc -c < patches/generated/sm80-cu129.patch)
+          minimal_bytes=$(wc -c < .minimal/sm80-cu129-minimal.patch)
+          full_files=$(grep -c '^+++ b/' patches/generated/sm80-cu129.patch)
+          minimal_files=$(grep -c '^+++ b/' .minimal/sm80-cu129-minimal.patch)
+          echo "full_bytes=$full_bytes minimal_bytes=$minimal_bytes"
+          echo "full_files=$full_files minimal_files=$minimal_files"
+          test "$minimal_bytes" -lt "$full_bytes"
+          test "$minimal_files" -lt "$full_files"
+
+      - name: Upload minimal patch candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepseek-v41-sm80-cu129-minimal-candidate
+          path: |
+            .minimal/sm80-cu129-minimal.patch
+            .minimal/sm80-cu129-minimal.patch.sha256
+            .minimal/minimal-manifest.txt
+          if-no-files-found: error
+          retention-days: 7
