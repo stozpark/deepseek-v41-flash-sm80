@@ -78,7 +78,7 @@ def replace_in_class(
 
 # Dependency closure for the SM80 sparse-indexer query/decode sharding added
 # by wtdcode/vllm-backport a6ef07a + 6793ead. The official 0909 image predates
-# these two shared helpers, while the pinned SM80 indexer imports them.
+# these shared helpers, while the pinned SM80 indexer imports them.
 dist_utils = DST / "distributed/utils.py"
 dist_text = dist_utils.read_text(encoding="utf-8")
 if "def balanced_row_counts(" not in dist_text:
@@ -89,6 +89,21 @@ elif "def balanced_row_bounds(" not in dist_text:
         "distributed.utils has balanced_row_counts but not balanced_row_bounds; "
         "unexpected baseline, refusing unsafe patch"
     )
+
+# The pinned SM80 DeepSeek files use this gate to avoid compiling CuTe DSL
+# kernels below Hopper. The 0909 image has has_cutedsl() but predates the
+# capability-aware helper from the SM80 backport.
+import_utils = DST / "utils/import_utils.py"
+import_text = import_utils.read_text(encoding="utf-8")
+if "def is_cutedsl_supported(" not in import_text:
+    anchor = '''def has_cutedsl() -> bool:\n    """Whether the optional `cutelass` package is available."""\n    return _has_module("cutlass")\n'''
+    addition = anchor + '''\n\n@cache\ndef is_cutedsl_supported() -> bool:\n    """Whether CuTe DSL is installed and can compile for this device."""\n    from vllm.platforms import current_platform\n\n    return has_cutedsl() and current_platform.has_device_capability(90)\n'''
+    if anchor not in import_text:
+        raise SystemExit(
+            "CuTe DSL compatibility helper: expected has_cutedsl baseline not found; "
+            "refusing an unsafe patch"
+        )
+    import_utils.write_text(import_text.replace(anchor, addition, 1), encoding="utf-8")
 
 # Post-0909 correctness hotfix: vllm-project/vllm#56297 / backport #78.
 tokenizer = DST / "tokenizers/deepseek_v41.py"
@@ -133,8 +148,7 @@ replace_once(
 )
 
 # vLLM #53376: CUTLASS FP8 auto-selection must decline SM80 and fall through
-# to the Marlin fallback. Scope this replacement to the FP8 class only: the
-# neighboring INT8 class intentionally has a similar is_supported() body.
+# to the Marlin fallback. Scope this replacement to the FP8 class only.
 cutlass_fp8 = DST / "model_executor/kernels/linear/scaled_mm/cutlass.py"
 replace_in_class(
     cutlass_fp8,
@@ -169,6 +183,7 @@ for cache_utils in (
     )
 
 required_overlay = [
+    DST / "model_executor/kernels/linear/gemv_triton.py",
     DST / "v1/attention/ops/fp8_sm80.py",
     DST / "v1/attention/ops/mqa_logits_triton.py",
     DST / "models/deepseek_v4_1/ampere/ampere_sparse.py",
@@ -199,6 +214,7 @@ marker = Path("/opt/sm80-overlay/APPLIED")
 marker.write_text(
     f"target={DST}\nfiles={copied}\n"
     "balanced_row_helpers=1\n"
+    "cutedsl_capability_gate=1\n"
     "responses_api_text_hotfix=1\n"
     "language_model_only_swa_hotfix=1\n"
     "mhc_sm80_fallback=1\n"
