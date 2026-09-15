@@ -1,0 +1,98 @@
+name: Vendor SM80 runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, cu129, audit-sm80]
+    paths:
+      - '.github/workflows/vendor-sm80.yml'
+      - 'VERSION.env'
+
+permissions:
+  contents: write
+
+jobs:
+  vendor:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read pinned backport revision
+        id: pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          source VERSION.env
+          echo "repo=${BACKPORT_REPO}" >> "$GITHUB_OUTPUT"
+          echo "commit=${BACKPORT_COMMIT}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch pinned backport
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none --no-checkout "${{ steps.pin.outputs.repo }}" /tmp/vllm-backport
+          git -C /tmp/vllm-backport fetch --depth=1 origin "${{ steps.pin.outputs.commit }}"
+          git -C /tmp/vllm-backport checkout --detach "${{ steps.pin.outputs.commit }}"
+
+      - name: Vendor offline SM80 runtime sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf patches/vendor
+          mkdir -p patches/vendor
+
+          paths=(
+            vllm/models/deepseek_v4
+            vllm/models/deepseek_v4_1
+            vllm/model_executor/kernels/linear/gemv_triton.py
+            vllm/model_executor/layers/sparse_attn_indexer.py
+            vllm/model_executor/warmup/cutedsl_warmup.py
+            vllm/model_executor/warmup/flashinfer_sparse_mla_warmup.py
+            vllm/v1/attention/backends/registry.py
+            vllm/v1/attention/backends/mla/indexer.py
+            vllm/v1/attention/backends/mla/sparse_swa.py
+            vllm/v1/attention/backends/mla/rocm_aiter_mla_sparse.py
+            vllm/v1/attention/ops/common.py
+            vllm/v1/attention/ops/fp8_sm80.py
+            vllm/v1/attention/ops/mqa_logits_triton.py
+            vllm/v1/attention/ops/rocm_aiter_mla_sparse.py
+            vllm/v1/attention/ops/triton_reshape_and_cache_flash.py
+          )
+
+          for p in "${paths[@]}"; do
+            test -e "/tmp/vllm-backport/$p" || { echo "Missing pinned path: $p"; exit 1; }
+            mkdir -p "patches/vendor/$(dirname "$p")"
+            cp -a "/tmp/vllm-backport/$p" "patches/vendor/$p"
+          done
+
+          printf '%s\n' "${{ steps.pin.outputs.commit }}" > patches/vendor/BACKPORT_COMMIT
+          (
+            cd patches/vendor
+            find vllm -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          )
+
+          test -f patches/vendor/vllm/model_executor/kernels/linear/gemv_triton.py
+          test -f patches/vendor/vllm/v1/attention/ops/fp8_sm80.py
+          test -f patches/vendor/vllm/v1/attention/ops/mqa_logits_triton.py
+          test -f patches/vendor/vllm/models/deepseek_v4_1/ampere/ampere_sparse.py
+          grep -q 'to(tl.int64)' patches/vendor/vllm/v1/attention/ops/mqa_logits_triton.py
+          grep -q 'k_offset < context_len' patches/vendor/vllm/v1/attention/ops/mqa_logits_triton.py
+          test -s patches/vendor/SHA256SUMS
+
+      - name: Commit vendored files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A patches/vendor
+          if git diff --cached --quiet; then
+            echo "Vendor snapshot already current."
+            exit 0
+          fi
+          git commit -m "Vendor complete SM80 runtime dependency closure"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

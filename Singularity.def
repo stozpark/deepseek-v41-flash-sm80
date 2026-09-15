@@ -1,12 +1,12 @@
 Bootstrap: docker
-From: vllm/vllm-openai:deepseekv41-flash-0909-cu129
+From: vllm/vllm-openai:deepseekv41-flash-0909
 
 %labels
     Maintainer stozpark
     Model deepseek-ai/DeepSeek-V4.1-Flash
     GPU NVIDIA-A100-SM80
-    BaseImage vllm/vllm-openai:deepseekv41-flash-0909-cu129
-    CUDA 12.9.1
+    BaseImage vllm/vllm-openai:deepseekv41-flash-0909
+    CUDA 13.0.1
     SM80OverlayCommit 24cb31bb4fd0becee65c810c913a8caa4f610c36
 
 %files
@@ -26,11 +26,19 @@ From: vllm/vllm-openai:deepseekv41-flash-0909-cu129
     set -eu
     python3 /opt/sm80-overlay/apply_overlay.py
     python3 - <<'PY'
-import pathlib, vllm
-root=pathlib.Path(vllm.__file__).resolve().parent
-assert (root/'v1/attention/ops/fp8_sm80.py').exists()
-assert (root/'models/deepseek_v4_1/ampere/ampere_sparse.py').exists()
-print('SM80 vendored overlay static verification: OK')
+import importlib.metadata as m
+import pathlib
+import vllm
+print("vllm", m.version("vllm"))
+for p in ("torch", "triton"):
+    try:
+        print(p, m.version(p))
+    except Exception as exc:
+        print(p, "unknown", exc)
+root = pathlib.Path(vllm.__file__).resolve().parent
+assert (root / "v1/attention/ops/fp8_sm80.py").exists()
+assert (root / "models/deepseek_v4_1/ampere/ampere_sparse.py").exists()
+print("SM80 vendored overlay static verification: OK")
 PY
 
 %runscript

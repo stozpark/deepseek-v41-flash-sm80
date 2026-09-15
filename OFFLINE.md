@@ -1,21 +1,57 @@
-# Fully offline CUDA 12.9 SIF build
+# Fully offline SIF build
 
-The SM80 patch sources are already committed in `patches/vendor/`.
+The SM80 patch sources are already committed in `patches/vendor/`. The build
+host does not need GitHub access.
 
-On an internet-connected machine:
+## Recommended: transfer a base SIF
 
-```bash
-apptainer build deepseek-v41-official-cu129-base.sif docker://vllm/vllm-openai:deepseekv41-flash-0909-cu129
-```
-
-Transfer this repository plus the base SIF to the disconnected A100 host, then run:
+On an internet-connected machine with Apptainer/Singularity:
 
 ```bash
-BASE_SIF=/data/deepseek-v41-official-cu129-base.sif ./build_sif.sh
+apptainer build deepseek-v41-official-cu130-base.sif \
+  docker://vllm/vllm-openai:deepseekv41-flash-0909
 ```
 
-Output: `deepseek-v41-flash-sm80-cu129.sif`.
+Transfer both this repository and the base SIF to the disconnected A100 host.
+Then:
 
-No GitHub, registry, curl, or git network access is used on this path.
+```bash
+BASE_SIF=/data/deepseek-v41-official-cu130-base.sif ./build_sif.sh
+```
 
-Alternatively transfer a Docker archive and set `BASE_URI=docker-archive:///data/deepseekv41-cu129.tar` if your Apptainer/Singularity version supports that URI.
+Output:
+
+```text
+deepseek-v41-flash-sm80-cu130.sif
+```
+
+This path performs no registry, GitHub, curl, or git network access.
+
+## Alternative: local Docker archive / daemon
+
+On a connected machine:
+
+```bash
+docker pull vllm/vllm-openai:deepseekv41-flash-0909
+docker save -o deepseekv41-cu130.tar \
+  vllm/vllm-openai:deepseekv41-flash-0909
+```
+
+After transferring the tar file, recent Apptainer versions can use a local
+archive URI:
+
+```bash
+BASE_URI=docker-archive:///data/deepseekv41-cu130.tar ./build_sif.sh
+```
+
+If the image has already been loaded into a local Docker daemon, a
+`docker-daemon://...` URI can be supplied through `BASE_URI` instead. URI
+support varies by Apptainer/Singularity version, so `BASE_SIF` is the most
+portable offline method.
+
+## Verify vendored patch integrity
+
+```bash
+cd patches/vendor
+sha256sum -c SHA256SUMS
+```

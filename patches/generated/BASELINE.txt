@@ -1,0 +1,8 @@
+image=vllm/vllm-openai:deepseekv41-flash-0909-cu129
+image_pull_digest=sha256:4a4431d6a283f7551c3d7a7d5efb905569328c665cb89512d7ba1280c4ca1957
+installed_vllm=0.1.dev20904+g179dd0fa9.cu129
+torch=2.13.0+cu129
+triton=3.7.1
+transformers=5.17.0
+backport_source=wtdcode/vllm-backport
+backport_pin=24cb31bb4fd0becee65c810c913a8caa4f610c36
