@@ -1,15 +1,21 @@
-name: audit-main-cu130
+name: audit-broad-cu130-reference
 
 on:
   push:
     branches: [main]
+    paths:
+      - 'patches/vendor/**'
+      - 'patches/apply_overlay.py'
+      - '.github/scripts/audit_official_image.py'
+      - '.github/workflows/audit-main-cu130.yml'
+      - 'VERSION.env'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  cu130-source-audit:
+  cu130-broad-reference-audit:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -23,10 +29,9 @@ jobs:
         run: |
           grep -qx 'OFFICIAL_IMAGE=vllm/vllm-openai:deepseekv41-flash-0909' VERSION.env
           grep -qx 'CUDA_FAMILY=13.0.1' VERSION.env
-          grep -qx 'From: vllm/vllm-openai:deepseekv41-flash-0909' Singularity.def
       - name: Pull official DeepSeek V4.1 CUDA 13 image
         run: docker pull vllm/vllm-openai:deepseekv41-flash-0909
-      - name: Apply SM80 overlay and audit source compatibility
+      - name: Apply broad audit/regeneration overlay
         run: |
           set -euxo pipefail
           docker run --rm \
@@ -38,4 +43,10 @@ jobs:
               cp -a /work/patches/vendor/vllm /opt/sm80-overlay/vllm; \
               cp /work/patches/apply_overlay.py /opt/sm80-overlay/apply_overlay.py; \
               python3 /opt/sm80-overlay/apply_overlay.py; \
-              python3 /work/.github/scripts/audit_official_image.py'
+              python3 -m compileall -q /usr/local/lib/python3.12/dist-packages/vllm; \
+              test -f /usr/local/lib/python3.12/dist-packages/vllm/v1/attention/ops/mqa_logits_triton.py; \
+              test -f /usr/local/lib/python3.12/dist-packages/vllm/models/deepseek_v4_1/ampere/ampere_sparse.py; \
+              echo BROAD_SM80_REFERENCE_APPLY_OK'
+
+# This broad tree is an audit/regeneration reference only. Production uses the
+# independently replay-verified 25-file minimal patch and its own audit.
