@@ -37,18 +37,31 @@ for needle in (
     if needle not in vl_text:
         raise SystemExit(f"ERROR: V4.1 vision-model invariant missing: {needle}")
 
-manifest = Path("/work/patches/generated/sm80-cu129-minimal.manifest.txt")
-if manifest.is_file():
+vision_paths = {
+    "models/deepseek_v4_1/common/mm_preprocess.py",
+    "models/deepseek_v4_1/nvidia/vl_model.py",
+    "models/deepseek_v4/common/vision.py",
+}
+manifest_candidates = [
+    Path("/work/patches/generated/sm80-cu129-minimal.manifest.txt"),
+    Path("/work/patches/generated/sm80-cu130-minimal.manifest.txt"),
+]
+found_manifest = False
+for manifest in manifest_candidates:
+    if not manifest.is_file():
+        continue
+    found_manifest = True
     patched = set(manifest.read_text(encoding="utf-8").splitlines())
-    for rel in (
-        "models/deepseek_v4_1/common/mm_preprocess.py",
-        "models/deepseek_v4_1/nvidia/vl_model.py",
-        "models/deepseek_v4/common/vision.py",
-    ):
-        if rel in patched:
-            raise SystemExit(
-                f"ERROR: production SM80 patch should preserve official vision source unchanged: {rel}"
-            )
+    leaked = sorted(vision_paths & patched)
+    if leaked:
+        raise SystemExit(
+            "ERROR: production SM80 patch should preserve official vision source unchanged: "
+            + ", ".join(leaked)
+        )
+    print(f"vision_source_preservation_manifest={manifest.name}: OK")
+
+if Path("/work/patches/generated").is_dir() and not found_manifest:
+    raise SystemExit("ERROR: no recognized production minimal-patch manifest found")
 
 print("DEEPSEEK-V4.1 MULTIMODAL SOURCE AUDIT OK")
 print("official vision preprocessing/model wrapper preserved; encoder TP-data support present")
