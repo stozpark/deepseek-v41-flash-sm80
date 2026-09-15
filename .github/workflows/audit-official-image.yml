@@ -1,45 +1,48 @@
-name: audit-official-image
+name: audit-broad-cu129-reference
 
 on:
   push:
     branches: [audit-sm80]
+    paths:
+      - 'patches/vendor/**'
+      - 'patches/apply_overlay.py'
+      - '.github/scripts/audit_official_image.py'
+      - '.github/workflows/audit-official-image.yml'
+      - 'VERSION.env'
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  cu129-import-audit:
+  cu129-broad-reference-audit:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-
-      - name: Show runner disk
-        run: df -h /
-
       - name: Free space for official image
         run: |
           sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet || true
           sudo docker system prune -af || true
           df -h /
-
+      - name: Verify CUDA 12.9 audit pin
+        run: |
+          grep -qx 'OFFICIAL_IMAGE=vllm/vllm-openai:deepseekv41-flash-0909-cu129' VERSION.env
+          grep -qx 'CUDA_FAMILY=12.9.1' VERSION.env
       - name: Pull official DeepSeek V4.1 CUDA 12.9 image
         run: docker pull vllm/vllm-openai:deepseekv41-flash-0909-cu129
-
-      - name: Apply vendored SM80 source and capture exact delta
+      - name: Apply broad audit/regeneration overlay and capture delta
         run: |
+          set -euxo pipefail
           rm -rf .audit
           mkdir -p .audit
           docker run --rm \
             --entrypoint bash \
-            -v "$PWD:/work" \
-            -w /work \
+            -v "$PWD:/work" -w /work \
             vllm/vllm-openai:deepseekv41-flash-0909-cu129 \
             -lc 'set -euxo pipefail; \
               python3 /work/.github/scripts/snapshot_vllm_text.py /work/.audit/baseline; \
-              rm -rf /opt/sm80-overlay; \
-              mkdir -p /opt/sm80-overlay; \
+              rm -rf /opt/sm80-overlay; mkdir -p /opt/sm80-overlay; \
               cp -a /work/patches/vendor/vllm /opt/sm80-overlay/vllm; \
               cp /work/patches/apply_overlay.py /opt/sm80-overlay/apply_overlay.py; \
               python3 /opt/sm80-overlay/apply_overlay.py; \
@@ -47,70 +50,34 @@ jobs:
               python3 /work/.github/scripts/snapshot_vllm_text.py /work/.audit/patched'
 
           python3 .github/scripts/make_patch_bundle.py \
-            .audit/baseline .audit/patched .audit/sm80-cu129.patch \
-            | tee .audit/patch-manifest.txt
-          sha256sum .audit/sm80-cu129.patch | tee .audit/sm80-cu129.patch.sha256
-          du -h .audit/sm80-cu129.patch
-
-      - name: Replay compact patch on a fresh official image
+            .audit/baseline .audit/patched .audit/sm80-cu129-broad-reference.patch \
+            | tee .audit/broad-reference-manifest.txt
+          sha256sum .audit/sm80-cu129-broad-reference.patch \
+            | tee .audit/sm80-cu129-broad-reference.patch.sha256
+      - name: Replay broad reference on fresh official image
         run: |
           docker run --rm \
             --entrypoint bash \
-            -v "$PWD:/work" \
-            -w /work \
+            -v "$PWD:/work" -w /work \
             vllm/vllm-openai:deepseekv41-flash-0909-cu129 \
             -lc 'set -euxo pipefail; \
               root="$(python3 -c "import pathlib,vllm; print(pathlib.Path(vllm.__file__).resolve().parent)")"; \
-              if command -v git >/dev/null 2>&1; then \
-                cd "$root"; git apply --unsafe-paths /work/.audit/sm80-cu129.patch; cd /work; \
-              elif command -v patch >/dev/null 2>&1; then \
-                python3 -c "from pathlib import Path; import re; root=Path(\"$root\"); lines=Path(\"/work/.audit/sm80-cu129.patch\").read_text().splitlines(); [ (root / m.group(1)).parent.mkdir(parents=True, exist_ok=True) for line in lines if (m := re.match(r\"^\\+\\+\\+ b/(.+)$\", line)) ]"; \
-                patch --batch --forward -p1 -d "$root" < /work/.audit/sm80-cu129.patch; \
-              else \
-                echo "ERROR: official image has neither git nor patch" >&2; exit 1; \
-              fi; \
+              python3 -c "from pathlib import Path; import re; root=Path(\"$root\"); lines=Path(\"/work/.audit/sm80-cu129-broad-reference.patch\").read_text().splitlines(); [ (root / m.group(1)).parent.mkdir(parents=True, exist_ok=True) for line in lines if (m := re.match(r\"^\\+\\+\\+ b/(.+)$\", line)) ]"; \
+              patch --batch --forward -p1 -d "$root" < /work/.audit/sm80-cu129-broad-reference.patch; \
               python3 /work/.github/scripts/audit_official_image.py; \
               python3 /work/.github/scripts/snapshot_vllm_text.py /work/.audit/replayed'
-
           diff -qr .audit/patched .audit/replayed
-          echo "PATCH REPLAY IS BYTE-IDENTICAL TO PATCHED TEXT TREE"
-
-      - name: Publish verified compact patch
-        run: |
-          mkdir -p patches/generated
-          cp .audit/sm80-cu129.patch patches/generated/sm80-cu129.patch
-          awk '{print $1 "  sm80-cu129.patch"}' \
-            .audit/sm80-cu129.patch.sha256 \
-            > patches/generated/sm80-cu129.patch.sha256
-          cp .audit/patch-manifest.txt patches/generated/sm80-cu129.manifest.txt
-          cat > patches/generated/BASELINE.txt <<'EOF'
-          image=vllm/vllm-openai:deepseekv41-flash-0909-cu129
-          image_pull_digest=sha256:4a4431d6a283f7551c3d7a7d5efb905569328c665cb89512d7ba1280c4ca1957
-          installed_vllm=0.1.dev20904+g179dd0fa9.cu129
-          torch=2.13.0+cu129
-          triton=3.7.1
-          transformers=5.17.0
-          backport_source=wtdcode/vllm-backport
-          backport_pin=24cb31bb4fd0becee65c810c913a8caa4f610c36
-          EOF
-
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add patches/generated
-          if git diff --cached --quiet; then
-            echo "Verified compact patch is already committed."
-          else
-            git commit -m "Publish verified DeepSeek V4.1 SM80 cu129 patch"
-            git push origin HEAD:audit-sm80
-          fi
-
-      - name: Upload compact patch audit artifact
+          echo 'BROAD AUDIT REFERENCE REPLAY IS BYTE-IDENTICAL'
+      - name: Upload broad reference artifact
         uses: actions/upload-artifact@v4
         with:
-          name: deepseek-v41-sm80-cu129-patch-audit
+          name: deepseek-v41-sm80-cu129-broad-reference
           path: |
-            .audit/sm80-cu129.patch
-            .audit/sm80-cu129.patch.sha256
-            .audit/patch-manifest.txt
+            .audit/sm80-cu129-broad-reference.patch
+            .audit/sm80-cu129-broad-reference.patch.sha256
+            .audit/broad-reference-manifest.txt
           if-no-files-found: error
           retention-days: 7
+
+# This workflow never publishes into patches/generated/. Production consumes
+# only the independently verified 25-file sm80-cu129-minimal patch.
