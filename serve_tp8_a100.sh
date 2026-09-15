@@ -16,16 +16,22 @@ MAX_NUM_SEQS="${MAX_NUM_SEQS:-16}"
 MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-16384}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
 ENABLE_EXPERT_PARALLEL="${ENABLE_EXPERT_PARALLEL:-0}"
-# Bring-up default: keep speculation off until the target model / SM80 kernels
-# are proven healthy. Enable explicitly with DISABLE_DSPARK=0 afterwards.
 DISABLE_DSPARK="${DISABLE_DSPARK:-1}"
 ENABLE_LOCAL_ARGMAX_REDUCTION="${ENABLE_LOCAL_ARGMAX_REDUCTION:-0}"
-# This deployment targets the full DeepSeek-V4.1-Flash multimodal model.
-# Vision is enabled by default; set ENABLE_VISION=0 only for an intentional
-# text-only deployment that wants to save vision-encoder memory.
+# Full DeepSeek-V4.1-Flash multimodal serving is the default.
 ENABLE_VISION="${ENABLE_VISION:-1}"
 USE_RUST_FRONTEND="${USE_RUST_FRONTEND:-0}"
 VLLM_ENGINE_READY_TIMEOUT_S="${VLLM_ENGINE_READY_TIMEOUT_S:-3600}"
+
+if [[ "$ENABLE_VISION" == "1" && "$DISABLE_DSPARK" != "1" ]]; then
+  echo "ERROR: DSpark/MTP draft-head serving is not supported for the DeepSeek-V4.1 vision wrapper." >&2
+  echo "Use DISABLE_DSPARK=1 with Vision, or set ENABLE_VISION=0 before separately validating text-only DSpark." >&2
+  exit 1
+fi
+if [[ "$ENABLE_VISION" == "1" && "$ENABLE_LOCAL_ARGMAX_REDUCTION" == "1" ]]; then
+  echo "ERROR: local-argmax DSpark reduction is meaningless while DSpark is disabled for Vision." >&2
+  exit 1
+fi
 
 if command -v apptainer >/dev/null 2>&1; then
   RUNNER=apptainer
@@ -70,9 +76,6 @@ ARGS=(
 )
 
 if [[ "$ENABLE_VISION" == "1" ]]; then
-  # Official DeepSeek-V4.1 multimodal serving mode: replicate the relatively
-  # small MM encoder and split its inputs across TP ranks instead of TP-sharding
-  # the encoder weights.
   ARGS+=(--mm-encoder-tp-mode data)
 else
   ARGS+=(--language-model-only)
@@ -82,9 +85,6 @@ if [[ "$DISABLE_DSPARK" != "1" ]]; then
   if [[ "$ENABLE_LOCAL_ARGMAX_REDUCTION" == "1" ]]; then
     ARGS+=(--speculative-config '{"method":"dspark","num_speculative_tokens":5,"use_local_argmax_reduction":true}')
   else
-    # Full-vocab DSpark path: fewer cross-version shared-API dependencies and
-    # therefore preferred when speculation is explicitly enabled on the
-    # 0909-official-image SM80 backport.
     ARGS+=(--speculative-config '{"method":"dspark","num_speculative_tokens":5}')
   fi
 fi

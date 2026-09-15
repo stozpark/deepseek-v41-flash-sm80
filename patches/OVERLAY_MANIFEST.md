@@ -1,32 +1,31 @@
-# SM80 vendored overlay
+# SM80 patch layout
 
-This repository is designed for disconnected/offline build hosts.
+## Production path (`main`, CUDA 13)
 
-The A100/SM80 runtime sources are committed under `patches/vendor/`; SIF build
-does **not** clone GitHub, fetch a commit, use curl, or download patch files.
-The vendor snapshot is generated from:
+The production SIF applies only:
 
-- source: `https://github.com/wtdcode/vllm-backport`
-- commit: `24cb31bb4fd0becee65c810c913a8caa4f610c36`
+- `patches/generated/sm80-cu130-minimal.patch`
+- `patches/generated/sm80-cu130-minimal.patch.sha256`
+- `patches/generated/sm80-cu130-minimal.manifest.txt`
+- `patches/apply_minimal_patch.py`
 
-Vendored runtime scope:
+The verified production delta contains exactly **25 changed files** and is replayed against the pristine official image `vllm/vllm-openai:deepseekv41-flash-0909`.
 
-- complete `vllm/models/deepseek_v4/`
-- complete `vllm/models/deepseek_v4_1/`
-- `vllm/model_executor/layers/sparse_attn_indexer.py`
-- `vllm/model_executor/warmup/cutedsl_warmup.py`
-- `vllm/model_executor/warmup/flashinfer_sparse_mla_warmup.py`
-- `vllm/v1/attention/backends/registry.py`
-- `vllm/v1/attention/backends/mla/indexer.py`
-- `vllm/v1/attention/backends/mla/sparse_swa.py`
-- `vllm/v1/attention/backends/mla/rocm_aiter_mla_sparse.py`
-- `vllm/v1/attention/ops/common.py`
-- `vllm/v1/attention/ops/fp8_sm80.py`
-- `vllm/v1/attention/ops/rocm_aiter_mla_sparse.py`
-- `vllm/v1/attention/ops/triton_reshape_and_cache_flash.py`
+It excludes model backends under:
 
-`patches/vendor/BACKPORT_COMMIT` records the source pin and
-`patches/vendor/SHA256SUMS` verifies every vendored `vllm/` file before build.
+- `models/deepseek_v4/amd/`
+- `models/deepseek_v4/cpu/`
+- `models/deepseek_v4/xpu/`
+- `models/deepseek_v4_1/amd/`
 
-`.github/workflows/vendor-sm80.yml` is only a maintainer refresh mechanism. It
-is not used on the offline build host.
+Official DeepSeek-V4.1 vision/VL preprocessing files remain from the official image unchanged.
+
+`v1/attention/ops/rocm_aiter_mla_sparse.py` remains intentionally in the minimal patch: despite the filename, the backport reuses its portable Triton sparse-MLA implementation on CUDA SM80.
+
+## Audit/regeneration path
+
+`patches/vendor/` is a pinned broad source snapshot from:
+
+`wtdcode/vllm-backport@24cb31bb4fd0becee65c810c913a8caa4f610c36`
+
+It is retained to regenerate and audit the patch, but is **not copied into the production SIF**. `patches/apply_overlay.py` is audit/regeneration tooling; production uses `apply_minimal_patch.py`.
