@@ -16,6 +16,12 @@ jobs:
         run: python3 -m py_compile verify_runtime.py patches/apply_overlay.py
       - name: Pin sanity
         run: |
+          grep -q '^OFFICIAL_IMAGE=vllm/vllm-openai:deepseekv41-flash-0909-cu129$' VERSION.env
+          grep -q '^CUDA_FAMILY=12\.9\.1$' VERSION.env
+          grep -q '^SIF_NAME=deepseek-v41-flash-sm80-cu129\.sif$' VERSION.env
+          grep -q '^From: vllm/vllm-openai:deepseekv41-flash-0909-cu129$' Singularity.def
+          grep -q '^    CUDA 12\.9\.1$' Singularity.def
           grep -q '24cb31bb4fd0becee65c810c913a8caa4f610c36' VERSION.env
-          grep -q 'vllm/vllm-openai:deepseekv41-flash-0909' Singularity.def
           grep -q 'fp8_sm80.py' prepare_sm80_overlay.sh
+          grep -q 'ENABLE_VISION="${ENABLE_VISION:-1}"' serve_tp8_a100.sh
+          grep -q -- '--mm-encoder-tp-mode data' serve_tp8_a100.sh
