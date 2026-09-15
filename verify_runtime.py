@@ -28,6 +28,13 @@ except Exception:
     pass
 print("vllm_root", root)
 
+cuda_runtime = str(torch.version.cuda or "")
+if not cuda_runtime.startswith("12.9"):
+    raise SystemExit(
+        f"ERROR: this cu129 runtime requires torch CUDA 12.9, got {cuda_runtime!r}"
+    )
+print("cuda129_runtime: OK")
+
 if not torch.cuda.is_available():
     raise SystemExit("ERROR: CUDA unavailable; run this inside the SIF with --nv")
 
@@ -42,9 +49,6 @@ for idx in range(torch.cuda.device_count()):
 device = torch.device("cuda:0")
 
 print("=== DeepSeek V4.1 model registry ===")
-# This is the exact class-inspection path that originally failed with the
-# balanced_row_bounds API mismatch. Run it on the physical A100 so subprocess
-# inspection also sees a real CUDA platform.
 from vllm.model_executor.models.registry import ModelRegistry
 
 registered = ModelRegistry.models.get("DeepseekV41ForCausalLM")
@@ -69,15 +73,12 @@ if backend_name != "TRITON_MLA_SPARSE_DSV41":
     raise SystemExit(f"ERROR: unexpected V4.1 SM80 backend: {backend_name}")
 print("attention_cls", DeepseekV41AmpereMLAAttention.__name__)
 
-# CuTe DSL paths are Hopper+; an A100 must take the portable fallback.
 from vllm.utils.import_utils import is_cutedsl_supported
 
 if is_cutedsl_supported():
     raise SystemExit("ERROR: CuTe DSL incorrectly reports support on SM80")
 print("cutedsl_sm80_gate: OK")
 
-# A100 must not auto-select CUTLASS FP8. It should fall through to the Marlin
-# fallback used on GPUs without native FP8 tensor-core support (#53376).
 from vllm.model_executor.kernels.linear.scaled_mm.cutlass import (
     CutlassFP8ScaledMMLinearKernel,
 )
@@ -99,8 +100,6 @@ if lut.shape != (256,) or lut.dtype != torch.bfloat16 or lut.device.type != "cud
 print("fp8_sm80_lut: OK")
 
 print("=== paged indexer Triton fallback ===")
-# Compile and execute the actual SM80 paged-indexer fallback. Width 65 creates
-# a partial tail so a bad tail-store mask is observable immediately.
 from vllm.v1.attention.ops.mqa_logits_triton import fp8_paged_mqa_logits_triton
 
 B, NEXT_N, H, D = 1, 1, 16, 128
@@ -128,9 +127,6 @@ if not torch.isneginf(logits[0, 1:]).all():
 print("paged_mqa_sm80_tail_mask: OK")
 
 print("=== V4.1 strided block-table gather ===")
-# Reproduce vLLM #55109 with the V4.1 cache implementation. The active view
-# has width 1 but retains a backing stride of 4. Before the fix request 2+
-# addressed the wrong physical block and could issue an illegal memory access.
 from vllm.models.deepseek_v4_1.common.ops.cache_utils import (
     dequantize_and_gather_k_cache,
     quantize_and_insert_k_cache,
@@ -194,7 +190,7 @@ torch.cuda.synchronize()
 torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 print("strided_block_table_gather: OK")
 
-print("=== V4.1 text-only SWA guards ===")
+print("=== V4.1 multimodal/SWA compatibility guards ===")
 swa_text = (root / "v1/attention/backends/mla/sparse_swa.py").read_text()
 v41_attn_text = (root / "models/deepseek_v4_1/attention.py").read_text()
 v41_cache_text = (root / "models/deepseek_v4_1/common/ops/cache_utils.py").read_text()
@@ -205,11 +201,9 @@ for needle, text, label in (
     ("image_width = swa_max_image_tokens(vllm_config)", v41_cache_text, "V4.1 warmup"),
 ):
     if needle not in text:
-        raise SystemExit(f"ERROR: --language-model-only SWA hotfix missing at {label}")
-print("language_model_only_swa: OK")
+        raise SystemExit(f"ERROR: V4.1 multimodal/SWA compatibility hotfix missing at {label}")
+print("multimodal_swa_compatibility: OK")
 
-# Local-argmax DSpark is an optional optimization and needs newer logits APIs.
-# Report capability, but do not fail. Base bring-up keeps DSpark disabled.
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
 
 local_argmax_api = hasattr(LogitsProcessor, "get_shard_logits") and hasattr(
@@ -217,4 +211,4 @@ local_argmax_api = hasattr(LogitsProcessor, "get_shard_logits") and hasattr(
 )
 print("dspark_local_argmax_api", local_argmax_api)
 
-print("SM80 DeepSeek-V4.1 runtime verification: OK")
+print("SM80 DeepSeek-V4.1 CUDA 12.9 runtime verification: OK")
