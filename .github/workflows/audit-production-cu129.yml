@@ -3,6 +3,17 @@ name: audit-production-cu129
 on:
   push:
     branches: [cu129]
+    paths:
+      - 'VERSION.env'
+      - 'Singularity.def'
+      - 'build_sif.sh'
+      - 'patches/generated/sm80-cu129-minimal.patch'
+      - 'patches/generated/sm80-cu129-minimal.patch.sha256'
+      - 'patches/generated/sm80-cu129-minimal.manifest.txt'
+      - 'patches/apply_minimal_patch.py'
+      - '.github/scripts/audit_official_image.py'
+      - '.github/scripts/audit_multimodal_source.py'
+      - '.github/workflows/audit-production-cu129.yml'
   workflow_dispatch:
 
 permissions:
