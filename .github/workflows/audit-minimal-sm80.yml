@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   minimal-cu129-audit:
@@ -20,6 +20,13 @@ jobs:
           sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet || true
           sudo docker system prune -af || true
           df -h /
+
+      - name: Verify branch is CUDA 12.9
+        run: |
+          grep -qx 'OFFICIAL_IMAGE=vllm/vllm-openai:deepseekv41-flash-0909-cu129' VERSION.env
+          grep -qx 'CUDA_FAMILY=12.9.1' VERSION.env
+          grep -qx 'SIF_NAME=deepseek-v41-flash-sm80-cu129.sif' VERSION.env
+          grep -qx 'From: vllm/vllm-openai:deepseekv41-flash-0909-cu129' Singularity.def
 
       - name: Pull verified official baseline
         run: docker pull vllm/vllm-openai:deepseekv41-flash-0909-cu129
@@ -68,7 +75,7 @@ jobs:
           diff -qr .minimal/minimal .minimal/replayed
           echo "MINIMAL PATCH REPLAY IS BYTE-IDENTICAL"
 
-      - name: Enforce reduction from verified-full patch
+      - name: Enforce production-minimal scope
         run: |
           set -euxo pipefail
           full_bytes=$(wc -c < patches/generated/sm80-cu129.patch)
@@ -79,6 +86,33 @@ jobs:
           echo "full_files=$full_files minimal_files=$minimal_files"
           test "$minimal_bytes" -lt "$full_bytes"
           test "$minimal_files" -lt "$full_files"
+          test "$minimal_files" -eq 25
+          ! grep -Eq '^models/deepseek_v4/(amd|cpu|xpu)/' .minimal/minimal-manifest.txt
+          ! grep -Eq '^models/deepseek_v4_1/amd/' .minimal/minimal-manifest.txt
+          grep -q '^models/deepseek_v4_1/ampere/ampere_sparse.py$' .minimal/minimal-manifest.txt
+          grep -q '^models/deepseek_v4_1/nvidia/model.py$' .minimal/minimal-manifest.txt
+          grep -q '^models/deepseek_v4_1/common/engram.py$' .minimal/minimal-manifest.txt
+
+      - name: Publish verified minimal patch
+        run: |
+          mkdir -p patches/generated
+          cp .minimal/sm80-cu129-minimal.patch patches/generated/sm80-cu129-minimal.patch
+          awk '{print $1 "  sm80-cu129-minimal.patch"}' \
+            .minimal/sm80-cu129-minimal.patch.sha256 \
+            > patches/generated/sm80-cu129-minimal.patch.sha256
+          cp .minimal/minimal-manifest.txt patches/generated/sm80-cu129-minimal.manifest.txt
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add patches/generated/sm80-cu129-minimal.patch \
+                  patches/generated/sm80-cu129-minimal.patch.sha256 \
+                  patches/generated/sm80-cu129-minimal.manifest.txt
+          if git diff --cached --quiet; then
+            echo "Verified minimal patch is already committed."
+          else
+            git commit -m "Publish verified minimal DeepSeek V4.1 SM80 cu129 patch"
+            git push origin HEAD:minimal-sm80
+          fi
 
       - name: Upload minimal patch candidate
         uses: actions/upload-artifact@v4
