@@ -1,8 +1,6 @@
 # DeepSeek-V4.1-Flash on A100/A800 (SM80) - CUDA 12.9
 
-Run `deepseek-ai/DeepSeek-V4.1-Flash` with text + vision on NVIDIA A100/A800
-using the official vLLM DeepSeek-V4.1 CUDA 12.9 image plus a pinned SM80
-backport overlay.
+Run `deepseek-ai/DeepSeek-V4.1-Flash` with text + vision on NVIDIA A100/A800 using the official vLLM DeepSeek-V4.1 CUDA 12.9 image plus a verified production-minimal SM80 patch.
 
 ## Target
 
@@ -13,13 +11,14 @@ CUDA in image  : 12.9.1 family
 GPU target     : A100/A800 (SM80)
 Default layout : TP8 / PP1
 Vision         : enabled by default (--mm-encoder-tp-mode data)
-SM80 overlay   : wtdcode/vllm-backport@24cb31bb4fd0becee65c810c913a8caa4f610c36
+Backport source: wtdcode/vllm-backport@24cb31bb4fd0becee65c810c913a8caa4f610c36
+Production delta: 25 files / 240149 bytes
 Output SIF     : deepseek-v41-flash-sm80-cu129.sif
 ```
 
-The branch contains an official-image compatibility audit and a reproducible
-compact delta under `patches/generated/`. The full vendored source snapshot is
-kept under `patches/vendor/` so disconnected build hosts do not need GitHub.
+The production SIF does **not** copy the broad vendored backport tree. It applies `patches/generated/sm80-cu129-minimal.patch`, which was generated from and replayed against the pristine official `-cu129` image. The broad `patches/vendor/` snapshot remains only for reproducible regeneration and audit.
+
+The minimal patch intentionally leaves the official vision/VL preprocessing implementation untouched while adding the A100/SM80 runtime pieces and selected post-0909 correctness fixes. It also preserves official V4.1 Engram DP/ubatching code.
 
 ## Build
 
@@ -28,6 +27,7 @@ git clone https://github.com/stozpark/deepseek-v41-flash-sm80.git
 cd deepseek-v41-flash-sm80
 git checkout cu129
 git pull origin cu129
+./prepare_sm80_overlay.sh
 ./build_sif.sh
 ```
 
@@ -37,10 +37,14 @@ Result:
 deepseek-v41-flash-sm80-cu129.sif
 ```
 
-`build_sif.sh` refuses to build if `VERSION.env` / `Singularity.def` drift away
-from the official `-cu129` image. If `BASE_SIF` or `BASE_URI` is supplied, its
-PyTorch CUDA runtime is checked and a non-12.9 base is rejected. The completed
-SIF is checked again before the script reports success.
+`build_sif.sh` checks all of the following before/after build:
+
+- exact official `deepseekv41-flash-0909-cu129` base pin
+- `CUDA_FAMILY=12.9.x`
+- verified SHA256 of the 25-file production patch
+- absence of AMD/CPU/XPU model backends in that patch
+- CUDA 12.9 runtime in a supplied `BASE_SIF`
+- CUDA 12.9 runtime again in the completed SIF
 
 If fakeroot is unavailable:
 
@@ -48,75 +52,65 @@ If fakeroot is unavailable:
 BUILD_ARGS="" ./build_sif.sh
 ```
 
-For a fully offline build, see `OFFLINE.md`.
-
-## Preflight
-
-```bash
-./preflight.sh
-```
-
-Recommended starting point:
-
-```text
-GPU      : 8 x A100 80GB
-Host RAM : 384 GiB+ preferred
-TP       : 8
-PP       : 1
-Context  : 256K first
-```
+For a disconnected build, see `OFFLINE.md`.
 
 ## Serve: text + vision
 
-Vision is ON by default.
+Vision is ON by default and DSpark is OFF for initial bring-up:
 
 ```bash
-MODEL_PATH=/models/DeepSeek-V4.1-Flash \
-./serve_tp8_a100.sh
+MODEL_PATH=/models/DeepSeek-V4.1-Flash ./serve_tp8_a100.sh
 ```
 
-The launcher adds:
+Key defaults:
 
 ```text
 --tensor-parallel-size 8
 --mm-encoder-tp-mode data
+--kv-cache-dtype fp8_ds_mla
+--engram-config {"cpu_offload":true}
+--enable-prefix-caching
 --tokenizer-mode deepseek_v41
 --enable-auto-tool-choice
 --tool-call-parser deepseek_v41
 --reasoning-parser deepseek_v41
 ```
 
-Bring-up defaults keep DSpark disabled until the base A100 path is confirmed.
-After successful baseline serving:
+Enable DSpark only after the base path succeeds:
 
 ```bash
 DISABLE_DSPARK=0 MODEL_PATH=/models/DeepSeek-V4.1-Flash ./serve_tp8_a100.sh
 ```
 
-For an intentional text-only deployment only:
+Use text-only mode only intentionally:
 
 ```bash
 ENABLE_VISION=0 MODEL_PATH=/models/DeepSeek-V4.1-Flash ./serve_tp8_a100.sh
 ```
 
-## Verify on the physical A100
+## Physical A100 verification
 
 ```bash
-singularity exec --nv deepseek-v41-flash-sm80-cu129.sif \
-  python3 verify_runtime.py
+singularity exec --nv deepseek-v41-flash-sm80-cu129.sif python3 verify_runtime.py
 ```
 
-This checks the CUDA 12.9 runtime, DeepSeek-V4.1 model registry, SM80 sparse-MLA
-routing, software FP8 path, CUTLASS-to-Marlin capability gate, paged-indexer
-Triton fallback, and strided block-table gather behavior.
-
-## Offline source integrity
+Then start the server and run long-context validation:
 
 ```bash
-cd patches/vendor
-sha256sum -c SHA256SUMS
+python3 validate_long_context.py \
+  --target-tokens 60000 \
+  --deterministic-runs 4 \
+  --sampled-runs 20 \
+  --concurrency 4
 ```
 
-The base image's compiled native extensions are retained; the repository only
-adds/patches the Python/Triton/runtime pieces required for the SM80 execution
-path and selected post-0909 correctness fixes.
+The physical verifier exercises the original model-registry failure path, SM80 sparse-MLA routing, software FP8, CUTLASS-to-Marlin capability gating, paged-MQA tail masking, and V4.1 strided block-table addressing.
+
+## Branch roles
+
+- `cu129`: production branch for CUDA 12.9 / current A100 deployment.
+- `audit-sm80`: cu129 full-source audit/staging branch.
+- `minimal-sm80`: cu129 dependency-minimization/audit branch.
+- `main`: separate CUDA 13 branch; use only on a driver/runtime stack that supports it.
+
+Source-level CI is not a substitute for the final physical A100 kernel/runtime test.
