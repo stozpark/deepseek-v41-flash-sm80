@@ -33,7 +33,7 @@ jobs:
           grep -qx 'From: vllm/vllm-openai:deepseekv41-flash-0909' Singularity.def
       - name: Pull official DeepSeek V4.1 CUDA 13 baseline
         run: docker pull vllm/vllm-openai:deepseekv41-flash-0909
-      - name: Build full SM80 reference then minimize
+      - name: Build broad SM80 reference then minimize
         run: |
           set -euxo pipefail
           rm -rf .minimal
@@ -57,7 +57,8 @@ jobs:
             | tee .minimal/minimal-manifest.txt
           sha256sum .minimal/sm80-cu130-minimal.patch \
             | tee .minimal/sm80-cu130-minimal.patch.sha256
-      - name: Replay minimal CUDA 13 patch and audit
+          du -h .minimal/sm80-cu130-minimal.patch
+      - name: Replay candidate CUDA 13 patch and audit
         run: |
           docker run --rm \
             --entrypoint bash \
@@ -68,7 +69,7 @@ jobs:
               python3 -c "from pathlib import Path; import re; root=Path(\"$root\"); lines=Path(\"/work/.minimal/sm80-cu130-minimal.patch\").read_text().splitlines(); [ (root / m.group(1)).parent.mkdir(parents=True, exist_ok=True) for line in lines if (m := re.match(r\"^\\+\\+\\+ b/(.+)$\", line)) ];"; \
               patch --batch --forward -p1 -d "$root" < /work/.minimal/sm80-cu130-minimal.patch; \
               python3 /work/.github/scripts/audit_official_image.py; \
-              python3 /work/.github/scripts/audit_multimodal_source.py; \
+              SM80_PATCH_MANIFEST=/work/.minimal/minimal-manifest.txt python3 /work/.github/scripts/audit_multimodal_source.py; \
               python3 /work/.github/scripts/snapshot_vllm_text.py /work/.minimal/replayed'
           diff -qr .minimal/minimal .minimal/replayed
           echo 'CU130 MINIMAL PATCH REPLAY IS BYTE-IDENTICAL'
@@ -80,9 +81,14 @@ jobs:
           test "$minimal_files" -eq 25
           test "$(sed -n 's/^changed_files=//p' .minimal/minimal-manifest.txt)" = 25
           ! grep -Eq '^models/deepseek_v4/(amd|cpu|xpu)/|^models/deepseek_v4_1/amd/' .minimal/minimal-manifest.txt
-          grep -q '^models/deepseek_v4_1/ampere/ampere_sparse.py$' .minimal/minimal-manifest.txt
-          grep -q '^models/deepseek_v4_1/nvidia/model.py$' .minimal/minimal-manifest.txt
-          grep -q '^models/deepseek_v4_1/common/engram.py$' .minimal/minimal-manifest.txt
+          ! grep -qx 'models/deepseek_v4_1/common/mm_preprocess.py' .minimal/minimal-manifest.txt
+          ! grep -qx 'models/deepseek_v4_1/nvidia/vl_model.py' .minimal/minimal-manifest.txt
+          ! grep -qx 'models/deepseek_v4/common/vision.py' .minimal/minimal-manifest.txt
+          grep -qx 'models/deepseek_v4_1/ampere/ampere_sparse.py' .minimal/minimal-manifest.txt
+          grep -qx 'models/deepseek_v4_1/nvidia/model.py' .minimal/minimal-manifest.txt
+          grep -qx 'models/deepseek_v4_1/common/engram.py' .minimal/minimal-manifest.txt
+          grep -qx 'v1/attention/ops/fp8_sm80.py' .minimal/minimal-manifest.txt
+          grep -qx 'v1/attention/ops/mqa_logits_triton.py' .minimal/minimal-manifest.txt
       - name: Publish verified CUDA 13 minimal patch
         run: |
           mkdir -p patches/generated
