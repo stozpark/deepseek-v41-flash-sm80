@@ -13,7 +13,13 @@ jobs:
         run: |
           for f in *.sh; do bash -n "$f"; done
       - name: Python syntax
-        run: python3 -m py_compile verify_runtime.py patches/apply_overlay.py patches/apply_minimal_patch.py
+        run: |
+          python3 -m py_compile \
+            verify_runtime.py \
+            patches/apply_overlay.py \
+            patches/apply_minimal_patch.py \
+            .github/scripts/audit_official_image.py \
+            .github/scripts/audit_multimodal_source.py
       - name: CUDA 12.9 pin sanity
         run: |
           grep -qx 'OFFICIAL_IMAGE=vllm/vllm-openai:deepseekv41-flash-0909-cu129' VERSION.env
@@ -29,16 +35,20 @@ jobs:
           test "$(sed -n 's/^changed_files=//p' sm80-cu129-minimal.manifest.txt)" = 25
           test "$(tail -n +3 sm80-cu129-minimal.manifest.txt | wc -l)" = 25
           ! grep -Eq '^models/deepseek_v4/(amd|cpu|xpu)/|^models/deepseek_v4_1/amd/' sm80-cu129-minimal.manifest.txt
+          ! grep -qx 'models/deepseek_v4_1/common/mm_preprocess.py' sm80-cu129-minimal.manifest.txt
+          ! grep -qx 'models/deepseek_v4_1/nvidia/vl_model.py' sm80-cu129-minimal.manifest.txt
           grep -qx 'models/deepseek_v4_1/ampere/ampere_sparse.py' sm80-cu129-minimal.manifest.txt
           grep -qx 'models/deepseek_v4_1/nvidia/model.py' sm80-cu129-minimal.manifest.txt
           grep -qx 'models/deepseek_v4_1/common/engram.py' sm80-cu129-minimal.manifest.txt
           grep -qx 'v1/attention/ops/fp8_sm80.py' sm80-cu129-minimal.manifest.txt
           grep -qx 'v1/attention/ops/mqa_logits_triton.py' sm80-cu129-minimal.manifest.txt
-      - name: Launcher defaults
+      - name: Multimodal launcher safety
         run: |
           grep -q 'ENABLE_VISION="${ENABLE_VISION:-1}"' serve_tp8_a100.sh
           grep -q -- '--mm-encoder-tp-mode data' serve_tp8_a100.sh
           grep -q 'DISABLE_DSPARK="${DISABLE_DSPARK:-1}"' serve_tp8_a100.sh
+          grep -q 'DSpark/MTP draft-head serving is not supported' serve_tp8_a100.sh
+          grep -q 'ENABLE_VISION=0' serve_tp8_a100.sh
       - name: Production build does not inject broad vendor tree
         run: |
           ! grep -q 'patches/vendor/vllm /opt/' Singularity.def
