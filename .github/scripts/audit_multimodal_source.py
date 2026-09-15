@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+import os
 from pathlib import Path
 
 import vllm
@@ -42,10 +43,15 @@ vision_paths = {
     "models/deepseek_v4_1/nvidia/vl_model.py",
     "models/deepseek_v4/common/vision.py",
 }
-manifest_candidates = [
-    Path("/work/patches/generated/sm80-cu129-minimal.manifest.txt"),
-    Path("/work/patches/generated/sm80-cu130-minimal.manifest.txt"),
-]
+override = os.environ.get("SM80_PATCH_MANIFEST")
+if override:
+    manifest_candidates = [Path(override)]
+else:
+    manifest_candidates = [
+        Path("/work/patches/generated/sm80-cu129-minimal.manifest.txt"),
+        Path("/work/patches/generated/sm80-cu130-minimal.manifest.txt"),
+    ]
+
 found_manifest = False
 for manifest in manifest_candidates:
     if not manifest.is_file():
@@ -58,9 +64,11 @@ for manifest in manifest_candidates:
             "ERROR: production SM80 patch should preserve official vision source unchanged: "
             + ", ".join(leaked)
         )
-    print(f"vision_source_preservation_manifest={manifest.name}: OK")
+    print(f"vision_source_preservation_manifest={manifest}: OK")
 
-if Path("/work/patches/generated").is_dir() and not found_manifest:
+if override and not found_manifest:
+    raise SystemExit(f"ERROR: requested SM80 patch manifest not found: {override}")
+if not override and Path("/work/patches/generated").is_dir() and not found_manifest:
     raise SystemExit("ERROR: no recognized production minimal-patch manifest found")
 
 print("DEEPSEEK-V4.1 MULTIMODAL SOURCE AUDIT OK")
