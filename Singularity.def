@@ -1,12 +1,12 @@
 Bootstrap: docker
-From: vllm/vllm-openai:deepseekv41-flash-0909
+From: vllm/vllm-openai:deepseekv41-flash-0909-cu129
 
 %labels
     Maintainer stozpark
     Model deepseek-ai/DeepSeek-V4.1-Flash
     GPU NVIDIA-A100-SM80
-    BaseImage vllm/vllm-openai:deepseekv41-flash-0909
-    CUDA 13.0.1
+    BaseImage vllm/vllm-openai:deepseekv41-flash-0909-cu129
+    CUDA 12.9.1
     SM80OverlayCommit 24cb31bb4fd0becee65c810c913a8caa4f610c36
 
 %files
