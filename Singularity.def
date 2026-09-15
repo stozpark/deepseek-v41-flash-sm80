@@ -1,12 +1,12 @@
 Bootstrap: docker
-From: vllm/vllm-openai:deepseekv41-flash-0909
+From: vllm/vllm-openai:deepseekv41-flash-0909-cu129
 
 %labels
     Maintainer stozpark
     Model deepseek-ai/DeepSeek-V4.1-Flash
     GPU NVIDIA-A100-SM80
-    BaseImage vllm/vllm-openai:deepseekv41-flash-0909
-    CUDA 13.0.1
+    BaseImage vllm/vllm-openai:deepseekv41-flash-0909-cu129
+    CUDA 12.9.1
     SM80OverlayCommit 24cb31bb4fd0becee65c810c913a8caa4f610c36
 
 %files
@@ -28,17 +28,27 @@ From: vllm/vllm-openai:deepseekv41-flash-0909
     python3 - <<'PY'
 import importlib.metadata as m
 import pathlib
+import torch
 import vllm
+
 print("vllm", m.version("vllm"))
-for p in ("torch", "triton"):
+print("torch", torch.__version__)
+print("torch.version.cuda", torch.version.cuda)
+for p in ("triton",):
     try:
         print(p, m.version(p))
     except Exception as exc:
         print(p, "unknown", exc)
+
+cuda = str(torch.version.cuda or "")
+if not cuda.startswith("12.9"):
+    raise SystemExit(f"ERROR: cu129 build requires CUDA 12.9 PyTorch runtime, got {cuda!r}")
+
 root = pathlib.Path(vllm.__file__).resolve().parent
 assert (root / "v1/attention/ops/fp8_sm80.py").exists()
 assert (root / "models/deepseek_v4_1/ampere/ampere_sparse.py").exists()
 print("SM80 vendored overlay static verification: OK")
+print("CUDA 12.9 runtime verification: OK")
 PY
 
 %runscript

@@ -1,80 +1,54 @@
-# DeepSeek-V4.1-Flash on A100/A800 (SM80) - CUDA 13
+# DeepSeek-V4.1-Flash on A100/A800 (SM80) - CUDA 12.9
 
-Run `deepseek-ai/DeepSeek-V4.1-Flash` on NVIDIA A100/A800 using a SIF built
-from the **official vLLM DeepSeek-V4.1 image** plus a pinned Ampere overlay.
+Run `deepseek-ai/DeepSeek-V4.1-Flash` with text + vision on NVIDIA A100/A800
+using the official vLLM DeepSeek-V4.1 CUDA 12.9 image plus a pinned SM80
+backport overlay.
 
-## Base
+## Target
 
 ```text
-Official image : vllm/vllm-openai:deepseekv41-flash-0909
-CUDA in image  : 13.0.1
+Model          : deepseek-ai/DeepSeek-V4.1-Flash
+Official image : vllm/vllm-openai:deepseekv41-flash-0909-cu129
+CUDA in image  : 12.9.1 family
 GPU target     : A100/A800 (SM80)
+Default layout : TP8 / PP1
+Vision         : enabled by default (--mm-encoder-tp-mode data)
 SM80 overlay   : wtdcode/vllm-backport@24cb31bb4fd0becee65c810c913a8caa4f610c36
-Output SIF     : deepseek-v41-flash-sm80-cu130.sif
+Output SIF     : deepseek-v41-flash-sm80-cu129.sif
 ```
 
-For CUDA 12.9 use the [`cu129`](../../tree/cu129) branch.
+The branch contains an official-image compatibility audit and a reproducible
+compact delta under `patches/generated/`. The full vendored source snapshot is
+kept under `patches/vendor/` so disconnected build hosts do not need GitHub.
 
-## Why an overlay is still needed
-
-The official DeepSeek-V4.1 image provides the model integration and native
-CUDA/PyTorch/vLLM stack, but the stock CUDA path is not an A100 path: native
-Triton FP8 E4M3 conversion requires SM89+, and the normal V4.1 sparse-MLA
-selection targets newer GPU backends.
-
-The pinned overlay adds the Ampere-specific pieces already exercised by the
-A100 backport:
-
-- SM8x `TRITON_MLA_SPARSE_DSV41` routing
-- software E4M3 encode/decode for FP8 cache operations below SM89
-- V4.1 128-token indexer pages
-- CUDA-capable Triton sparse-MLA path reused from the ROCm/Triton backend
-- pre-SM89 JIT warmup fixes
-- DSpark V4.1 hooks from the validated backport pin
-
-The base image's compiled native extensions are **not replaced**. See
-[`patches/OVERLAY_MANIFEST.md`](patches/OVERLAY_MANIFEST.md).
-
-## Build the SIF
+## Build
 
 ```bash
 git clone https://github.com/stozpark/deepseek-v41-flash-sm80.git
 cd deepseek-v41-flash-sm80
-git checkout main
+git checkout cu129
+git pull origin cu129
 ./build_sif.sh
 ```
 
 Result:
 
 ```text
-deepseek-v41-flash-sm80-cu130.sif
+deepseek-v41-flash-sm80-cu129.sif
 ```
 
-`build_sif.sh` first prepares the exact SM80 overlay from the pinned commit,
-then invokes Apptainer/Singularity using `Singularity.def`.
+`build_sif.sh` refuses to build if `VERSION.env` / `Singularity.def` drift away
+from the official `-cu129` image. If `BASE_SIF` or `BASE_URI` is supplied, its
+PyTorch CUDA runtime is checked and a non-12.9 base is rejected. The completed
+SIF is checked again before the script reports success.
 
-If you already have a checkout of the backport, including on a machine where
-you want to avoid another clone:
-
-```bash
-BACKPORT_SOURCE=/path/to/vllm-backport ./build_sif.sh
-```
-
-For a fully pre-vendored build:
-
-```bash
-BACKPORT_SOURCE=/path/to/vllm-backport ./prepare_sm80_overlay.sh
-SKIP_OVERLAY_PREPARE=1 ./build_sif.sh
-```
-
-The generated `patches/overlay/` and `*.sif` are intentionally git-ignored.
-The SIF is several GB and should not be committed to Git.
-
-If your installation cannot use fakeroot:
+If fakeroot is unavailable:
 
 ```bash
 BUILD_ARGS="" ./build_sif.sh
 ```
+
+For a fully offline build, see `OFFLINE.md`.
 
 ## Preflight
 
@@ -86,62 +60,63 @@ Recommended starting point:
 
 ```text
 GPU      : 8 x A100 80GB
-Host RAM : 384 GiB+ preferred (256 GiB is tight)
+Host RAM : 384 GiB+ preferred
 TP       : 8
+PP       : 1
 Context  : 256K first
 ```
 
-This `main` branch is CUDA 13.0.1. On an older data-center driver, prefer the
-`cu129` branch unless your site has a validated CUDA forward-compat setup.
+## Serve: text + vision
 
-## Serve
+Vision is ON by default.
 
 ```bash
 MODEL_PATH=/models/DeepSeek-V4.1-Flash \
 ./serve_tp8_a100.sh
 ```
 
-Default serving configuration:
+The launcher adds:
 
 ```text
-TP                         8
-max_model_len              262144
-max_num_seqs               16
-max_num_batched_tokens     16384
-gpu_memory_utilization     0.90
-KV cache                   fp8_ds_mla
-Engram                     CPU offload
-Prefix caching             enabled
-DSpark                     5 speculative tokens
-CUDA graph                 FULL_AND_PIECEWISE
-custom all-reduce          disabled
+--tensor-parallel-size 8
+--mm-encoder-tp-mode data
+--tokenizer-mode deepseek_v41
+--enable-auto-tool-choice
+--tool-call-parser deepseek_v41
+--reasoning-parser deepseek_v41
 ```
 
-To isolate startup problems, disable DSpark first:
+Bring-up defaults keep DSpark disabled until the base A100 path is confirmed.
+After successful baseline serving:
 
 ```bash
-DISABLE_DSPARK=1 MODEL_PATH=/models/DeepSeek-V4.1-Flash ./serve_tp8_a100.sh
+DISABLE_DSPARK=0 MODEL_PATH=/models/DeepSeek-V4.1-Flash ./serve_tp8_a100.sh
 ```
 
-Enable expert parallel after the TP8 baseline is confirmed:
+For an intentional text-only deployment only:
 
 ```bash
-ENABLE_EXPERT_PARALLEL=1 MODEL_PATH=/models/DeepSeek-V4.1-Flash ./serve_tp8_a100.sh
+ENABLE_VISION=0 MODEL_PATH=/models/DeepSeek-V4.1-Flash ./serve_tp8_a100.sh
 ```
 
-## Verify inside the SIF
+## Verify on the physical A100
 
 ```bash
-apptainer exec --nv deepseek-v41-flash-sm80-cu130.sif \
+singularity exec --nv deepseek-v41-flash-sm80-cu129.sif \
   python3 verify_runtime.py
 ```
 
-This verifies the SM8x backend registration, the software FP8 helper, the
-V4.1 Ampere attention module and the exposed GPU compute capabilities.
+This checks the CUDA 12.9 runtime, DeepSeek-V4.1 model registry, SM80 sparse-MLA
+routing, software FP8 path, CUTLASS-to-Marlin capability gate, paged-indexer
+Triton fallback, and strided block-table gather behavior.
 
-## Notes
+## Offline source integrity
 
-This repository packages a reproducible A100 port; it does not claim that the
-unmodified official Docker image itself supports A100. The official image is
-the base, and the pinned SM80 Python/Triton overlay is what supplies the
-Ampere execution path.
+```bash
+cd patches/vendor
+sha256sum -c SHA256SUMS
+```
+
+The base image's compiled native extensions are retained; the repository only
+adds/patches the Python/Triton/runtime pieces required for the SM80 execution
+path and selected post-0909 correctness fixes.

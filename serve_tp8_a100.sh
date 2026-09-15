@@ -20,7 +20,10 @@ ENABLE_EXPERT_PARALLEL="${ENABLE_EXPERT_PARALLEL:-0}"
 # are proven healthy. Enable explicitly with DISABLE_DSPARK=0 afterwards.
 DISABLE_DSPARK="${DISABLE_DSPARK:-1}"
 ENABLE_LOCAL_ARGMAX_REDUCTION="${ENABLE_LOCAL_ARGMAX_REDUCTION:-0}"
-ENABLE_VISION="${ENABLE_VISION:-0}"
+# This deployment targets the full DeepSeek-V4.1-Flash multimodal model.
+# Vision is enabled by default; set ENABLE_VISION=0 only for an intentional
+# text-only deployment that wants to save vision-encoder memory.
+ENABLE_VISION="${ENABLE_VISION:-1}"
 USE_RUST_FRONTEND="${USE_RUST_FRONTEND:-0}"
 VLLM_ENGINE_READY_TIMEOUT_S="${VLLM_ENGINE_READY_TIMEOUT_S:-3600}"
 
@@ -66,10 +69,10 @@ ARGS=(
   --reasoning-parser deepseek_v41
 )
 
-# Text-only is the safer / lower-memory default for this A100 deployment.
-# Vision can be enabled explicitly; then use data-parallel MM encoder mode as
-# in the official DeepSeek-V4.1 recipe.
 if [[ "$ENABLE_VISION" == "1" ]]; then
+  # Official DeepSeek-V4.1 multimodal serving mode: replicate the relatively
+  # small MM encoder and split its inputs across TP ranks instead of TP-sharding
+  # the encoder weights.
   ARGS+=(--mm-encoder-tp-mode data)
 else
   ARGS+=(--language-model-only)
