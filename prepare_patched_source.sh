@@ -2,4 +2,4 @@
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${ROOT_DIR}/prepare_sm80_overlay.sh"
-echo "Prepared build overlay at ${ROOT_DIR}/patches/overlay"
+echo "Production source patch is verified and ready for ./build_sif.sh"

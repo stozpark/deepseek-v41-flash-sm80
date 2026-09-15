@@ -13,15 +13,34 @@ jobs:
         run: |
           for f in *.sh; do bash -n "$f"; done
       - name: Python syntax
-        run: python3 -m py_compile verify_runtime.py patches/apply_overlay.py
-      - name: Pin sanity
+        run: python3 -m py_compile verify_runtime.py patches/apply_overlay.py patches/apply_minimal_patch.py
+      - name: CUDA 12.9 pin sanity
         run: |
-          grep -q '^OFFICIAL_IMAGE=vllm/vllm-openai:deepseekv41-flash-0909-cu129$' VERSION.env
-          grep -q '^CUDA_FAMILY=12\.9\.1$' VERSION.env
-          grep -q '^SIF_NAME=deepseek-v41-flash-sm80-cu129\.sif$' VERSION.env
-          grep -q '^From: vllm/vllm-openai:deepseekv41-flash-0909-cu129$' Singularity.def
-          grep -q '^    CUDA 12\.9\.1$' Singularity.def
+          grep -qx 'OFFICIAL_IMAGE=vllm/vllm-openai:deepseekv41-flash-0909-cu129' VERSION.env
+          grep -qx 'CUDA_FAMILY=12.9.1' VERSION.env
+          grep -qx 'SIF_NAME=deepseek-v41-flash-sm80-cu129.sif' VERSION.env
+          grep -qx 'From: vllm/vllm-openai:deepseekv41-flash-0909-cu129' Singularity.def
+          grep -q 'CUDA 12.9.1' Singularity.def
           grep -q '24cb31bb4fd0becee65c810c913a8caa4f610c36' VERSION.env
-          grep -q 'fp8_sm80.py' prepare_sm80_overlay.sh
+      - name: Production minimal patch integrity
+        run: |
+          cd patches/generated
+          sha256sum -c sm80-cu129-minimal.patch.sha256
+          test "$(sed -n 's/^changed_files=//p' sm80-cu129-minimal.manifest.txt)" = 25
+          test "$(tail -n +3 sm80-cu129-minimal.manifest.txt | wc -l)" = 25
+          ! grep -Eq '^models/deepseek_v4/(amd|cpu|xpu)/|^models/deepseek_v4_1/amd/' sm80-cu129-minimal.manifest.txt
+          grep -qx 'models/deepseek_v4_1/ampere/ampere_sparse.py' sm80-cu129-minimal.manifest.txt
+          grep -qx 'models/deepseek_v4_1/nvidia/model.py' sm80-cu129-minimal.manifest.txt
+          grep -qx 'models/deepseek_v4_1/common/engram.py' sm80-cu129-minimal.manifest.txt
+          grep -qx 'v1/attention/ops/fp8_sm80.py' sm80-cu129-minimal.manifest.txt
+          grep -qx 'v1/attention/ops/mqa_logits_triton.py' sm80-cu129-minimal.manifest.txt
+      - name: Launcher defaults
+        run: |
           grep -q 'ENABLE_VISION="${ENABLE_VISION:-1}"' serve_tp8_a100.sh
           grep -q -- '--mm-encoder-tp-mode data' serve_tp8_a100.sh
+          grep -q 'DISABLE_DSPARK="${DISABLE_DSPARK:-1}"' serve_tp8_a100.sh
+      - name: Production build does not inject broad vendor tree
+        run: |
+          ! grep -q 'patches/vendor/vllm /opt/' Singularity.def
+          grep -q 'sm80-cu129-minimal.patch' Singularity.def
+          grep -q 'apply_minimal_patch.py' Singularity.def

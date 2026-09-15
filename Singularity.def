@@ -7,13 +7,15 @@ From: vllm/vllm-openai:deepseekv41-flash-0909-cu129
     GPU NVIDIA-A100-SM80
     BaseImage vllm/vllm-openai:deepseekv41-flash-0909-cu129
     CUDA 12.9.1
-    SM80OverlayCommit 24cb31bb4fd0becee65c810c913a8caa4f610c36
+    SM80BackportCommit 24cb31bb4fd0becee65c810c913a8caa4f610c36
+    SM80PatchScope production-minimal-25-files
 
 %files
-    patches/vendor/vllm /opt/sm80-overlay/vllm
-    patches/vendor/BACKPORT_COMMIT /opt/sm80-overlay/BACKPORT_COMMIT
-    patches/vendor/SHA256SUMS /opt/sm80-overlay/SHA256SUMS
-    patches/apply_overlay.py /opt/sm80-overlay/apply_overlay.py
+    patches/generated/sm80-cu129-minimal.patch /opt/sm80-patch/sm80-cu129-minimal.patch
+    patches/generated/sm80-cu129-minimal.patch.sha256 /opt/sm80-patch/sm80-cu129-minimal.patch.sha256
+    patches/generated/sm80-cu129-minimal.manifest.txt /opt/sm80-patch/sm80-cu129-minimal.manifest.txt
+    patches/generated/BASELINE.txt /opt/sm80-patch/BASELINE.txt
+    patches/apply_minimal_patch.py /opt/sm80-patch/apply_minimal_patch.py
 
 %environment
     export PYTHONUNBUFFERED=1
@@ -24,7 +26,7 @@ From: vllm/vllm-openai:deepseekv41-flash-0909-cu129
 
 %post
     set -eu
-    python3 /opt/sm80-overlay/apply_overlay.py
+    python3 /opt/sm80-patch/apply_minimal_patch.py
     python3 - <<'PY'
 import importlib.metadata as m
 import pathlib
@@ -34,20 +36,25 @@ import vllm
 print("vllm", m.version("vllm"))
 print("torch", torch.__version__)
 print("torch.version.cuda", torch.version.cuda)
-for p in ("triton",):
-    try:
-        print(p, m.version(p))
-    except Exception as exc:
-        print(p, "unknown", exc)
+try:
+    print("triton", m.version("triton"))
+except Exception as exc:
+    print("triton unknown", exc)
 
 cuda = str(torch.version.cuda or "")
 if not cuda.startswith("12.9"):
     raise SystemExit(f"ERROR: cu129 build requires CUDA 12.9 PyTorch runtime, got {cuda!r}")
 
 root = pathlib.Path(vllm.__file__).resolve().parent
-assert (root / "v1/attention/ops/fp8_sm80.py").exists()
-assert (root / "models/deepseek_v4_1/ampere/ampere_sparse.py").exists()
-print("SM80 vendored overlay static verification: OK")
+for rel in (
+    "v1/attention/ops/fp8_sm80.py",
+    "v1/attention/ops/mqa_logits_triton.py",
+    "models/deepseek_v4_1/ampere/ampere_sparse.py",
+    "models/deepseek_v4_1/nvidia/model.py",
+    "models/deepseek_v4_1/common/engram.py",
+):
+    assert (root / rel).is_file(), rel
+print("SM80 production-minimal patch static verification: OK")
 print("CUDA 12.9 runtime verification: OK")
 PY
 
