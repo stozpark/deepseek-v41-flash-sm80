@@ -1,0 +1,41 @@
+name: audit-main-cu130
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cu130-source-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free space
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet || true
+          sudo docker system prune -af || true
+          df -h /
+      - name: Verify CUDA 13 branch pins
+        run: |
+          grep -qx 'OFFICIAL_IMAGE=vllm/vllm-openai:deepseekv41-flash-0909' VERSION.env
+          grep -qx 'CUDA_FAMILY=13.0.1' VERSION.env
+          grep -qx 'From: vllm/vllm-openai:deepseekv41-flash-0909' Singularity.def
+      - name: Pull official DeepSeek V4.1 CUDA 13 image
+        run: docker pull vllm/vllm-openai:deepseekv41-flash-0909
+      - name: Apply SM80 overlay and audit source compatibility
+        run: |
+          set -euxo pipefail
+          docker run --rm \
+            --entrypoint bash \
+            -v "$PWD:/work" -w /work \
+            vllm/vllm-openai:deepseekv41-flash-0909 \
+            -lc 'set -euxo pipefail; \
+              rm -rf /opt/sm80-overlay; mkdir -p /opt/sm80-overlay; \
+              cp -a /work/patches/vendor/vllm /opt/sm80-overlay/vllm; \
+              cp /work/patches/apply_overlay.py /opt/sm80-overlay/apply_overlay.py; \
+              python3 /opt/sm80-overlay/apply_overlay.py; \
+              python3 /work/.github/scripts/audit_official_image.py'

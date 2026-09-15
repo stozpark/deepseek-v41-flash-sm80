@@ -16,7 +16,16 @@ MAX_NUM_SEQS="${MAX_NUM_SEQS:-16}"
 MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-16384}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
 ENABLE_EXPERT_PARALLEL="${ENABLE_EXPERT_PARALLEL:-0}"
-DISABLE_DSPARK="${DISABLE_DSPARK:-0}"
+# Bring-up default: keep speculation off until the target model / SM80 kernels
+# are proven healthy. Enable explicitly with DISABLE_DSPARK=0 afterwards.
+DISABLE_DSPARK="${DISABLE_DSPARK:-1}"
+ENABLE_LOCAL_ARGMAX_REDUCTION="${ENABLE_LOCAL_ARGMAX_REDUCTION:-0}"
+# This deployment targets the full DeepSeek-V4.1-Flash multimodal model.
+# Vision is enabled by default; set ENABLE_VISION=0 only for an intentional
+# text-only deployment that wants to save vision-encoder memory.
+ENABLE_VISION="${ENABLE_VISION:-1}"
+USE_RUST_FRONTEND="${USE_RUST_FRONTEND:-0}"
+VLLM_ENGINE_READY_TIMEOUT_S="${VLLM_ENGINE_READY_TIMEOUT_S:-3600}"
 
 if command -v apptainer >/dev/null 2>&1; then
   RUNNER=apptainer
@@ -32,6 +41,12 @@ export CUDA_VISIBLE_DEVICES
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export NCCL_ALGO="${NCCL_ALGO:-Ring}"
 export NCCL_PROTO="${NCCL_PROTO:-Simple}"
+export VLLM_ENGINE_READY_TIMEOUT_S
+if [[ "$USE_RUST_FRONTEND" == "1" ]]; then
+  export VLLM_USE_RUST_FRONTEND=1
+else
+  unset VLLM_USE_RUST_FRONTEND || true
+fi
 
 ARGS=(
   vllm serve "$MODEL_PATH"
@@ -54,8 +69,24 @@ ARGS=(
   --reasoning-parser deepseek_v41
 )
 
+if [[ "$ENABLE_VISION" == "1" ]]; then
+  # Official DeepSeek-V4.1 multimodal serving mode: replicate the relatively
+  # small MM encoder and split its inputs across TP ranks instead of TP-sharding
+  # the encoder weights.
+  ARGS+=(--mm-encoder-tp-mode data)
+else
+  ARGS+=(--language-model-only)
+fi
+
 if [[ "$DISABLE_DSPARK" != "1" ]]; then
-  ARGS+=(--speculative-config '{"method":"dspark","num_speculative_tokens":5,"use_local_argmax_reduction":true}')
+  if [[ "$ENABLE_LOCAL_ARGMAX_REDUCTION" == "1" ]]; then
+    ARGS+=(--speculative-config '{"method":"dspark","num_speculative_tokens":5,"use_local_argmax_reduction":true}')
+  else
+    # Full-vocab DSpark path: fewer cross-version shared-API dependencies and
+    # therefore preferred when speculation is explicitly enabled on the
+    # 0909-official-image SM80 backport.
+    ARGS+=(--speculative-config '{"method":"dspark","num_speculative_tokens":5}')
+  fi
 fi
 if [[ "$ENABLE_EXPERT_PARALLEL" == "1" ]]; then
   ARGS+=(--enable-expert-parallel)
@@ -75,4 +106,5 @@ fi
 echo "[sif]   $SIF_PATH"
 echo "[serve] GPUs=$CUDA_VISIBLE_DEVICES TP=$TP_SIZE max_len=$MAX_MODEL_LEN max_seqs=$MAX_NUM_SEQS"
 echo "[serve] model=$MODEL_PATH port=$PORT ep=$ENABLE_EXPERT_PARALLEL dspark=$((1-DISABLE_DSPARK))"
+echo "[serve] vision=$ENABLE_VISION local_argmax=$ENABLE_LOCAL_ARGMAX_REDUCTION rust_frontend=$USE_RUST_FRONTEND"
 exec "$RUNNER" exec --nv "${BIND_ARGS[@]}" "$SIF_PATH" "${ARGS[@]}"
