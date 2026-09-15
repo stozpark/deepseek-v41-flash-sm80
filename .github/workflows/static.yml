@@ -16,6 +16,9 @@ jobs:
         run: |
           python3 -m py_compile \
             verify_runtime.py \
+            vision_smoke.py \
+            long_context_smoke.py \
+            validate_long_context.py \
             patches/apply_overlay.py \
             patches/apply_minimal_patch.py \
             .github/scripts/audit_official_image.py \
