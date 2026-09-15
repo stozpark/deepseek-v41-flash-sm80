@@ -14,7 +14,6 @@ From: vllm/vllm-openai:deepseekv41-flash-0909-cu129
     patches/generated/sm80-cu129-minimal.patch /opt/sm80-patch/sm80-cu129-minimal.patch
     patches/generated/sm80-cu129-minimal.patch.sha256 /opt/sm80-patch/sm80-cu129-minimal.patch.sha256
     patches/generated/sm80-cu129-minimal.manifest.txt /opt/sm80-patch/sm80-cu129-minimal.manifest.txt
-    patches/generated/BASELINE.txt /opt/sm80-patch/BASELINE.txt
     patches/apply_minimal_patch.py /opt/sm80-patch/apply_minimal_patch.py
 
 %environment
