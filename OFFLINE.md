@@ -1,7 +1,6 @@
 # Fully offline CUDA 12.9 SIF build
 
-The SM80 patch sources are already committed in `patches/vendor/`. The build
-host does not need GitHub access.
+The production SM80 patch is already committed under `patches/generated/`; the disconnected build host does not need GitHub access. `patches/vendor/` is retained only for audit/regeneration and is not injected into the production SIF.
 
 ## Recommended: transfer a CUDA 12.9 base SIF
 
@@ -12,11 +11,11 @@ apptainer build deepseek-v41-official-cu129-base.sif \
   docker://vllm/vllm-openai:deepseekv41-flash-0909-cu129
 ```
 
-Transfer both this repository and the base SIF to the disconnected A100 host.
-Then:
+Transfer both this repository and the base SIF to the disconnected A100 host. Then:
 
 ```bash
 git checkout cu129
+./prepare_sm80_overlay.sh
 BASE_SIF=/data/deepseek-v41-official-cu129-base.sif ./build_sif.sh
 ```
 
@@ -26,9 +25,7 @@ Output:
 deepseek-v41-flash-sm80-cu129.sif
 ```
 
-`build_sif.sh` checks `torch.version.cuda` inside the supplied base and refuses
-to continue unless it is CUDA 12.9. It validates the completed SIF again after
-build.
+`prepare_sm80_overlay.sh` now verifies the production-minimal 25-file patch and its SHA256; it does not create or copy a broad source overlay. `build_sif.sh` also verifies the patch, checks `torch.version.cuda` in the supplied base, and refuses to continue unless it is CUDA 12.9. The completed SIF is validated again.
 
 This path performs no registry, GitHub, curl, or git network access.
 
@@ -48,12 +45,19 @@ After transferring the tar file:
 BASE_URI=docker-archive:///data/deepseekv41-cu129.tar ./build_sif.sh
 ```
 
-If the image has already been loaded into a local Docker daemon, a
-`docker-daemon://...` URI can be supplied through `BASE_URI`. URI support varies
-by Apptainer/Singularity version, so `BASE_SIF` is the most portable offline
-method.
+If the image is already loaded into a local Docker daemon, a `docker-daemon://...` URI can be supplied through `BASE_URI`. URI support varies by Apptainer/Singularity version, so `BASE_SIF` is the most portable offline method.
 
-## Verify vendored patch integrity
+## Verify production patch integrity
+
+```bash
+cd patches/generated
+sha256sum -c sm80-cu129-minimal.patch.sha256
+cat sm80-cu129-minimal.manifest.txt
+```
+
+The manifest must report `changed_files=25`.
+
+For maintainer-side broad source audit only:
 
 ```bash
 cd patches/vendor

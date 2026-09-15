@@ -5,15 +5,16 @@ Run `deepseek-ai/DeepSeek-V4.1-Flash` with text + vision on NVIDIA A100/A800 usi
 ## Target
 
 ```text
-Model          : deepseek-ai/DeepSeek-V4.1-Flash
-Official image : vllm/vllm-openai:deepseekv41-flash-0909-cu129
-CUDA in image  : 12.9.1 family
-GPU target     : A100/A800 (SM80)
-Default layout : TP8 / PP1
-Vision         : enabled by default (--mm-encoder-tp-mode data)
-Backport source: wtdcode/vllm-backport@24cb31bb4fd0becee65c810c913a8caa4f610c36
-Production delta: 25 files / 240149 bytes
-Output SIF     : deepseek-v41-flash-sm80-cu129.sif
+Model            : deepseek-ai/DeepSeek-V4.1-Flash
+Official image   : vllm/vllm-openai:deepseekv41-flash-0909-cu129
+CUDA in image    : 12.9.1 family
+GPU target       : A100/A800 (SM80)
+Default layout   : TP8 / PP1
+Vision           : enabled by default (--mm-encoder-tp-mode data)
+Speculative      : disabled for multimodal serving
+Backport source  : wtdcode/vllm-backport@24cb31bb4fd0becee65c810c913a8caa4f610c36
+Production delta : 25 files / 240149 bytes
+Output SIF       : deepseek-v41-flash-sm80-cu129.sif
 ```
 
 The production SIF does **not** copy the broad vendored backport tree. It applies `patches/generated/sm80-cu129-minimal.patch`, which was generated from and replayed against the pristine official `-cu129` image. The broad `patches/vendor/` snapshot remains only for reproducible regeneration and audit.
@@ -37,14 +38,7 @@ Result:
 deepseek-v41-flash-sm80-cu129.sif
 ```
 
-`build_sif.sh` checks all of the following before/after build:
-
-- exact official `deepseekv41-flash-0909-cu129` base pin
-- `CUDA_FAMILY=12.9.x`
-- verified SHA256 of the 25-file production patch
-- absence of AMD/CPU/XPU model backends in that patch
-- CUDA 12.9 runtime in a supplied `BASE_SIF`
-- CUDA 12.9 runtime again in the completed SIF
+`build_sif.sh` checks the exact official `-cu129` base pin, CUDA 12.9 family, SHA256 and 25-file manifest, absence of non-A100 model backends, and CUDA 12.9 again inside both supplied base SIFs and the final SIF.
 
 If fakeroot is unavailable:
 
@@ -56,7 +50,7 @@ For a disconnected build, see `OFFLINE.md`.
 
 ## Serve: text + vision
 
-Vision is ON by default and DSpark is OFF for initial bring-up:
+Vision is ON by default:
 
 ```bash
 MODEL_PATH=/models/DeepSeek-V4.1-Flash ./serve_tp8_a100.sh
@@ -76,16 +70,22 @@ Key defaults:
 --reasoning-parser deepseek_v41
 ```
 
-Enable DSpark only after the base path succeeds:
+### DSpark and Vision
+
+The DeepSeek-V4.1 vision wrapper does not support the MTP/DSpark draft-head weights. Therefore the launcher **rejects Vision + DSpark** instead of silently starting an unsupported configuration.
+
+For normal multimodal serving, keep the defaults:
 
 ```bash
-DISABLE_DSPARK=0 MODEL_PATH=/models/DeepSeek-V4.1-Flash ./serve_tp8_a100.sh
+ENABLE_VISION=1 DISABLE_DSPARK=1 \
+MODEL_PATH=/models/DeepSeek-V4.1-Flash ./serve_tp8_a100.sh
 ```
 
-Use text-only mode only intentionally:
+DSpark may only be tested separately in intentional text-only mode:
 
 ```bash
-ENABLE_VISION=0 MODEL_PATH=/models/DeepSeek-V4.1-Flash ./serve_tp8_a100.sh
+ENABLE_VISION=0 DISABLE_DSPARK=0 \
+MODEL_PATH=/models/DeepSeek-V4.1-Flash ./serve_tp8_a100.sh
 ```
 
 ## Physical A100 verification
@@ -104,7 +104,7 @@ python3 validate_long_context.py \
   --concurrency 4
 ```
 
-The physical verifier exercises the original model-registry failure path, SM80 sparse-MLA routing, software FP8, CUTLASS-to-Marlin capability gating, paged-MQA tail masking, and V4.1 strided block-table addressing.
+The physical verifier exercises the original model-registry failure path, SM80 sparse-MLA routing, software FP8, CUTLASS-to-Marlin capability gating, paged-MQA tail masking, and V4.1 strided block-table addressing. CI separately verifies that the official V4.1 vision preprocessing/wrapper stays intact and advertises encoder TP-data support.
 
 ## Branch roles
 

@@ -3,7 +3,7 @@ name: Vendor SM80 runtime
 on:
   workflow_dispatch:
   push:
-    branches: [main, cu129, audit-sm80]
+    branches: [main, cu129, audit-sm80, minimal-sm80]
     paths:
       - '.github/workflows/vendor-sm80.yml'
       - 'VERSION.env'
@@ -38,13 +38,16 @@ jobs:
           git -C /tmp/vllm-backport fetch --depth=1 origin "${{ steps.pin.outputs.commit }}"
           git -C /tmp/vllm-backport checkout --detach "${{ steps.pin.outputs.commit }}"
 
-      - name: Vendor offline SM80 runtime sources
+      - name: Vendor audit/regeneration dependency closure
         shell: bash
         run: |
           set -euo pipefail
           rm -rf patches/vendor
           mkdir -p patches/vendor
 
+          # Broad snapshot is intentionally retained for reproducible audit and
+          # regeneration. Production SIFs consume the verified minimal patch,
+          # not this entire tree.
           paths=(
             vllm/models/deepseek_v4
             vllm/models/deepseek_v4_1
@@ -94,5 +97,5 @@ jobs:
             echo "Vendor snapshot already current."
             exit 0
           fi
-          git commit -m "Vendor complete SM80 runtime dependency closure"
+          git commit -m "Vendor complete SM80 audit dependency closure"
           git push origin "HEAD:${GITHUB_REF_NAME}"
