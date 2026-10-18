@@ -116,7 +116,7 @@ export NCCL_ALGO="${NCCL_ALGO:-Ring}"
 export NCCL_PROTO="${NCCL_PROTO:-Simple}"
 export PYTHONUNBUFFERED=1
 echo "[experimental] Running static + hardware audit (NOT an inference test)"
-AUDIT=(python3 /opt/deepseek-sm80/audit_source.py --mode indexer --runtime)
+AUDIT=(python3 /opt/deepseek-sm80/audit_source.py --mode engram --runtime)
 if [[ -f "${MODEL_PATH}/config.json" ]]; then
   AUDIT+=(--model-config "${MODEL_PATH}/config.json")
 fi
@@ -133,6 +133,10 @@ echo "[experimental] Verify numerical output against independent A100 oracles"
 echo "[experimental] Verify paged/sparse MQA logits, candidate masks and top-k"
 "${RUNNER}" exec --nv "${BIND_ARGS[@]}" "${SIF_PATH}" \
   python3 /opt/deepseek-sm80/verify_sm80_indexer.py
+
+echo "[experimental] Verify Engram E4M3/E8M0 packed bytes and BF16 values"
+"${RUNNER}" exec --nv "${BIND_ARGS[@]}" "${SIF_PATH}" \
+  python3 /opt/deepseek-sm80/verify_sm80_engram.py
 
 echo "[experimental] Starting vLLM; no A100 accuracy/soak validation exists yet"
 exec "${RUNNER}" exec --nv "${BIND_ARGS[@]}" "${SIF_PATH}" "${ARGS[@]}"
