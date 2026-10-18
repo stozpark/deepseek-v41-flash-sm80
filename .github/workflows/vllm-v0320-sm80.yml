@@ -1,0 +1,90 @@
+name: vLLM-v0320-SM80-stage1-source-audit
+
+on:
+  push:
+    branches: [vllm-v0320-sm80]
+    paths:
+      - "latest/**"
+      - ".github/workflows/vllm-v0320-sm80.yml"
+      - "patches/vendor/vllm/v1/attention/ops/fp8_sm80.py"
+      - "patches/vendor/vllm/v1/attention/ops/mqa_logits_triton.py"
+  pull_request:
+    paths:
+      - "latest/**"
+      - ".github/workflows/vllm-v0320-sm80.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout SM80 repository
+        uses: actions/checkout@v4
+      - name: Checkout exact upstream vLLM release
+        uses: actions/checkout@v4
+        with:
+          repository: vllm-project/vllm
+          ref: 5df63a7203cdb9328d824a27b682e77c7b9928be
+          path: upstream
+          persist-credentials: false
+      - name: Check release/source pins
+        run: |
+          set -euo pipefail
+          grep -qx 'VLLM_VERSION=0.32.0' latest/VERSION.env
+          grep -qx 'VLLM_GIT_SHA=5df63a7203cdb9328d824a27b682e77c7b9928be' latest/VERSION.env
+          grep -qx 'MODEL_ID=deepseek-ai/DeepSeek-V4.1-Flash-1017' latest/VERSION.env
+          git -C upstream rev-parse HEAD | grep -qx 5df63a7203cdb9328d824a27b682e77c7b9928be
+          test ! -d upstream/vllm/models/deepseek_v4_1
+          test -f upstream/vllm/models/deepseek_v41/nvidia/model.py
+      - name: Python and Bash syntax
+        run: |
+          set -euo pipefail
+          python3 -m py_compile latest/audit_source.py latest/port_sm80_stage1.py latest/ampere_sparse.py
+          python3 -m py_compile patches/vendor/vllm/v1/attention/ops/fp8_sm80.py
+          python3 -m py_compile patches/vendor/vllm/v1/attention/ops/mqa_logits_triton.py
+          for f in latest/*.sh; do bash -n "$f"; done
+      - name: Verify launcher dry-runs and TP16 rejection
+        run: |
+          set -euo pipefail
+          DRY_RUN=1 TP_SIZE=8 ./latest/serve_a100.sh > /tmp/serve-a100.txt
+          grep -q 'TRITON_MLA_SPARSE_DSV41' /tmp/serve-a100.txt
+          grep -q 'DeepSeek-V4.1-Flash-1017' /tmp/serve-a100.txt
+          if DRY_RUN=1 TP_SIZE=16 ./latest/serve_a100.sh; then
+            echo 'Unexpected native TP16 acceptance' >&2; exit 1
+          fi
+          DRY_RUN=1 ./latest/serve_two_tp8.sh > /tmp/two-tp8.txt
+          grep -q 'GPUs=0,1,2,3,4,5,6,7' /tmp/two-tp8.txt
+          grep -q 'GPUs=8,9,10,11,12,13,14,15' /tmp/two-tp8.txt
+      - name: Audit pristine upstream and plan pinned patch
+        run: |
+          set -euo pipefail
+          python3 latest/audit_source.py --source-root upstream/vllm --mode baseline
+          python3 latest/port_sm80_stage1.py --skip-version-check \
+            --vllm-root upstream/vllm --dry-run
+      - name: Replay stage1 patch and static audit
+        run: |
+          set -euo pipefail
+          python3 latest/port_sm80_stage1.py --skip-version-check \
+            --vllm-root upstream/vllm
+          python3 latest/audit_source.py --source-root upstream/vllm --mode port
+          python3 -m py_compile \
+            upstream/vllm/models/deepseek_v41/nvidia/model.py \
+            upstream/vllm/models/deepseek_v41/ampere/ampere_sparse.py \
+            upstream/vllm/v1/attention/backends/registry.py
+      - name: Verify patch is fail-closed on double application
+        run: |
+          set -euo pipefail
+          if python3 latest/port_sm80_stage1.py --skip-version-check \
+                --vllm-root upstream/vllm; then
+            echo 'ERROR: version-guarded patch allowed a second application' >&2
+            exit 1
+          fi
+      - name: Publish stage1 status
+        run: |
+          echo 'STAGE1_SOURCE_AUDIT_PASS'
+          echo 'NOT A100 INFERENCE VALIDATION.'
+          echo 'Next: SM80 kernel, indexer, Engram integration and physical GPU test.'
