@@ -30,7 +30,7 @@ FILES_TO_COPY = {
 
 def git_blob_sha(content: bytes) -> str:
     """SHA1 matching the git blob OID published at vLLM tag v0.32.0."""
-    hdr = f"blob {len(content)}\\0".encode()
+    hdr = f"blob {len(content)}".encode() + bytes([0])
     return hashlib.sha1(hdr + content).hexdigest()
 
 
