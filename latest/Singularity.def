@@ -14,6 +14,7 @@ From: vllm/vllm-openai:v0.32.0
   latest/port_sm80_numeric.py /opt/deepseek-sm80/latest/port_sm80_numeric.py
   latest/ampere_sparse.py /opt/deepseek-sm80/latest/ampere_sparse.py
   latest/audit_source.py /opt/deepseek-sm80/audit_source.py
+  latest/test_inverse_rope_contract.py /opt/deepseek-sm80/test_inverse_rope_contract.py
   latest/verify_sm80_kernels.py /opt/deepseek-sm80/verify_sm80_kernels.py
   latest/verify_sm80_numeric.py /opt/deepseek-sm80/verify_sm80_numeric.py
   patches/vendor/vllm/v1/attention/ops/fp8_sm80.py /opt/deepseek-sm80/patches/vendor/vllm/v1/attention/ops/fp8_sm80.py
@@ -39,6 +40,7 @@ PY
   python3 /opt/deepseek-sm80/latest/port_sm80_stage1.py
   python3 /opt/deepseek-sm80/latest/port_sm80_numeric.py
   python3 /opt/deepseek-sm80/audit_source.py --mode numeric
+  python3 /opt/deepseek-sm80/test_inverse_rope_contract.py --source-root "$(python3 -c 'import vllm; print(vllm.__path__[0])')"
   echo "STAGE1_SOURCE_BUILT: GPU inference and kernel work remain unvalidated"
 
 %runscript
