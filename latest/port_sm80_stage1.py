@@ -82,17 +82,16 @@ def build_changes(root: Path) -> dict[Path, bytes]:
                 "    )\n" + anchor, rel)
         elif rel.endswith("scaled_mm/cutlass.py"):
             anchor = (
-                "        if not cutlass_fp8_supported():\\n"
-                "            return False, \\"CUTLASS FP8 kernels not available\\"\\n"
+                '        if not cutlass_fp8_supported():\n'
+                '            return False, "CUTLASS FP8 kernels not available"\n'
             )
             replacement = (
-                "        if compute_capability is None:\\n"
-                "            capability = current_platform.get_device_capability()\\n"
-                "            compute_capability = -1 if capability is None else capability.to_int()\\n"
-                "        if compute_capability < 89:\\n"
-                "            return False, \\"CUTLASS FP8 tensor-core MMA needs SM89+\\"\\n"
+                '        if compute_capability is None:\n'
+                '            capability = current_platform.get_device_capability()\n'
+                '            compute_capability = -1 if capability is None else capability.to_int()\n'
+                '        if compute_capability < 89:\n'
+                '            return False, "CUTLASS FP8 tensor-core MMA needs SM89+"\n'
             ) + anchor
-            # Anchor occurs only in the FP8 class, not in Int8.
             src = replace_once(src, anchor, replacement, rel)
         updates[path] = src.encode("utf-8")
     for from_rel, dest_rel in FILES_TO_COPY.items():
