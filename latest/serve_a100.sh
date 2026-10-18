@@ -112,7 +112,7 @@ export NCCL_ALGO="${NCCL_ALGO:-Ring}"
 export NCCL_PROTO="${NCCL_PROTO:-Simple}"
 export PYTHONUNBUFFERED=1
 echo "[experimental] Running static + hardware audit (NOT an inference test)"
-AUDIT=(python3 /opt/deepseek-sm80/audit_source.py --mode port --runtime)
+AUDIT=(python3 /opt/deepseek-sm80/audit_source.py --mode numeric --runtime)
 if [[ -f "${MODEL_PATH}/config.json" ]]; then
   AUDIT+=(--model-config "${MODEL_PATH}/config.json")
 fi
