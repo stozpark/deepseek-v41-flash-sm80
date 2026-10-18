@@ -57,7 +57,7 @@ def check_source(root: Path, mode: str) -> list[str]:
     if (root / "models/deepseek_v4_1").exists():
         fail("old deepseek_v4_1 package found: not the clean v0.32.0 baseline")
     checks.append("renamed_v41_package")
-    if mode == "port":
+    if mode in ("port", "numeric"):
         must_include(
             root,
             f"{MODEL_PACKAGE}/ampere/ampere_sparse.py",
@@ -71,6 +71,24 @@ def check_source(root: Path, mode: str) -> list[str]:
         must_include(root, "v1/attention/ops/fp8_sm80.py", ("get_e4m3fn_bf16_lut",))
         must_include(root, "v1/attention/ops/mqa_logits_triton.py", ("fp8_paged_mqa_logits_triton",))
         checks.append("stage1_sm80_backend_and_kernel_files")
+    if mode == "numeric":
+        numeric_sources = [
+            "models/deepseek_v41/common/ops/cache_utils.py",
+            "models/deepseek_v41/common/ops/fused_compress_quant_cache.py",
+            "models/deepseek_v41/common/ops/indexer_k_store.py",
+            "models/deepseek_v4/common/ops/fused_inv_rope_fp8_quant.py",
+            "v1/attention/ops/rocm_aiter_mla_sparse.py",
+        ]
+        for rel in numeric_sources:
+            source = (root / rel).read_text()
+            if ".to(tl.float8e4nv" in source:
+                fail(f"SM80-forbidden direct E4M3 cast in {rel}")
+            if "vllm.v1.attention.ops.fp8_sm80" not in source:
+                fail(f"SM80 software FP8 path missing in {rel}")
+        rope = (root / "v1/attention/ops/rocm_aiter_mla_sparse.py").read_text()
+        if "return output.shape[0] if fused_inv_rope else 0" not in rope:
+            fail("inverse RoPE return contract is not fixed")
+        checks.append("stage2_sm80_fp8_numeric_source_paths")
     return checks
 
 
@@ -102,7 +120,7 @@ def runtime_audit() -> dict:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--mode", choices=("baseline", "port"), default="baseline")
+    p.add_argument("--mode", choices=("baseline", "port", "numeric"), default="baseline")
     p.add_argument("--source-root", type=Path, help="vllm Python package directory")
     p.add_argument("--runtime", action="store_true", help="require CUDA>=13 and A100")
     p.add_argument("--model-config", type=Path, help="optional DeepSeek 1017 config.json")
