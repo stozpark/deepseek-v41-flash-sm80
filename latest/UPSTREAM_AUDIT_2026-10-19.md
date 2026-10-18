@@ -41,13 +41,14 @@ Other changes included docs, an SM103-only DeepEP image change, Qwen models, and
 1. E4M3FN software encode **bitwise** vs PyTorch across >23,000 values including tie, normal/subnormal boundaries, clipping, zero; exhaustive finite-byte decode; `verify_sm80_numeric.py`.
 2. Independent PyTorch reference for compressed FP8 KV dequant -> BF16 sparse attention, sink score, SWA-only, ragged topk, reordered/duplicated pages, and inverse RoPE final output; `verify_sm80_numeric.py`.
 3. FP8 indexer Q and paged K software fallback, FP8 prefill scores, paged decode with nonmonotonic block tables, causal/pad tails, candidate block selection and masked Top-K vs independent PyTorch oracle; `verify_sm80_indexer.py`.
-4. Explicit SM80 fail-closed gates for unsupported MXFP4 indexer, DCP/PCP, multi-token speculative decode. `--enforce-eager`, no SWA bounded replay/prefix cache.
-5. Pin exact upstream source Git blob IDs before each patch; compileall + independent source replay CI; no broad overwriting of upstream `deepseek_v41`.
+4. Engram SM80 lookup byte-exact E4M3FN/E8M0, both packed table result and BF16 dequant, with out-of-vocabulary zero masking; `verify_sm80_engram.py`.
+5. Explicit SM80 fail-closed gates for unsupported MXFP4 indexer, DCP/PCP, multi-token speculative decode. `--enforce-eager`, no SWA bounded replay/prefix cache.
+6. Pin exact upstream source Git blob IDs before each patch; compileall + independent source replay CI; no broad overwriting of upstream `deepseek_v41`.
 
 **Still mandatory** before service-ready designation:
 - Build exact v0.32.0 CUDA13 SIF and execute all CUDA numeric tests on A100 SM80.
 - Run weights-loaded TP8 on *1017*; compare logits/generation to independent supported reference at fixed seeds for text, vision, reasoning, tool calls; check 2K,8K,32K,128K and failure modes.
-- Verify all cache/indexer writers and readers use identical 584-byte MLA and 132-byte FP8 indexer records; NVIDIA reader/writer kernels may need further patches even if isolated math is correct.
+- Verify all cache/indexer writers and readers use identical 584-byte MLA and 132-byte FP8 indexer records, and **Engram pinned-host UVA path** matches the small GPU-table oracle; NVIDIA reader/writer kernels may need further patches even if isolated math is correct.
 - At least 100 representative requests under multi-request prefill/decode with KV fragmentation and candidate block heterogeneity, 0 invalid outputs, no silent truncation; benchmark throughput only afterward.
 
 **No A100 access is available in this conversation's tool runtime. No claim of a passed GPU numerical test or usable TP8 model checkpoint has been made.**
