@@ -24,22 +24,22 @@ if [[ "${DRY_RUN:-0}" == 1 ]]; then
   echo "Replica 1:"
   CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 PORT="${PORT_A}" \
     SERVED_MODEL_NAME=deepseek-v41-flash-1017-a \
-    DRY_RUN=1 TP_SIZE=8 "${ROOT}/serve_a100.sh"
+    DRY_RUN=1 TP_SIZE=8 bash "${ROOT}/serve_a100.sh"
   echo "Replica 2:"
   CUDA_VISIBLE_DEVICES=8,9,10,11,12,13,14,15 PORT="${PORT_B}" \
     SERVED_MODEL_NAME=deepseek-v41-flash-1017-b \
-    DRY_RUN=1 TP_SIZE=8 "${ROOT}/serve_a100.sh"
+    DRY_RUN=1 TP_SIZE=8 bash "${ROOT}/serve_a100.sh"
   exit 0
 fi
 echo "Launching 2 independent TP8 replicas; each loads its own full model."
 echo "WARNING: Engram host RAM is shared; verify RAM/pinned memory capacity."
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 PORT="${PORT_A}" \
   SERVED_MODEL_NAME=deepseek-v41-flash-1017-a \
-  TP_SIZE=8 "${ROOT}/serve_a100.sh" &
+  TP_SIZE=8 bash "${ROOT}/serve_a100.sh" &
 PID_A=$!
 CUDA_VISIBLE_DEVICES=8,9,10,11,12,13,14,15 PORT="${PORT_B}" \
   SERVED_MODEL_NAME=deepseek-v41-flash-1017-b \
-  TP_SIZE=8 "${ROOT}/serve_a100.sh" &
+  TP_SIZE=8 bash "${ROOT}/serve_a100.sh" &
 PID_B=$!
 cleanup() {
   kill "${PID_A}" "${PID_B}" 2>/dev/null || true
