@@ -28,15 +28,16 @@
 | 1 | `port_sm80_stage1.py` | Exact-source guarded Ampere sparse MLA backend, SM80 helper module, CUTLASS FP8 guard, and upstream inverse-RoPE bugfix [#62197](https://github.com/vllm-project/vllm/pull/62197) | CI source replay and six-case `test_inverse_rope_contract.py` |
 | 2 | `port_sm80_numeric.py` | Software E4M3FN encode/decode replacing SM80-incompatible native Triton casts in paged KV, compressor, indexer K, and sparse attention; preserves UE8M0 and FP4-rounded scale semantics | CI bytecode and exact-source checks, `verify_sm80_numeric.py` prepared for GPU |
 | 3 | `port_sm80_indexer.py` | Remove DeepGEMM requirement on SM80, quantize Q to correct FP8 bytes, use BF16 Tensor Core Triton `fp8_mqa_logits_triton`/`fp8_paged_mqa_logits_triton`; preserve upstream two-level candidate masking | CI patch replay + `verify_sm80_indexer.py` prepared for GPU |
+| 4 | `port_sm80_engram.py` | Avoid unsupported direct E4M3 tensor loads and FP32 casts in host-offloaded Engram tables on SM80; re-interpret bytes and preserve E8M0 scale semantics | CI patch replay + `verify_sm80_engram.py` tests both raw packed bytes and BF16 output |
 
 **Accuracy policy:** source CI passing is **not** a successful numerical
 benchmark. The real A100 script checks E4M3FN bitwise parity vs PyTorch,
 all 256 E4M3FN codewords, mixed sparse MLA and SWA output vs independent
 PyTorch attention, inverse RoPE and NoPE invariance, paged FP8 indexer
-logits and rank-consistent Top-K, candidate-block masking, and causal tails.
+logits and rank-consistent Top-K, candidate-block masking, and causal tails. Engram lookup is checked against a separate byte-exact packed E4M3/E8M0 and BF16 reference.
 Any assertion or unsupported configuration stops the launcher before model
 load. `ALLOWED_EXPERIMENTAL` is NOT a bypass around numerical tests;
-the correct opt-in is `ALLOW_EXPERIMENTAL=1`.
+the required opt-in is `ALLOW_EXPERIMENTAL=1`.
 
 ## Source validation (no GPU required)
 
@@ -63,7 +64,7 @@ BASE_SIF=/path/to/upstream-vllm0320-cu130.sif bash latest/build_sif.sh
 ```
 
 The resulting default file is
-`deepseek-v41-flash-sm80-v0320-stage3-unverified-cu130.sif`. The build
+`deepseek-v41-flash-sm80-v0320-stage4-unverified-cu130.sif`. The build
 checks source patch integrity and inverse-RoPE completion, not CUDA runtime.
 
 ## **Actual A100 validation** (mandatory)
@@ -86,12 +87,14 @@ The configured OpenAI API port is 18005.
 Standalone GPU diagnostics (after SIF build):
 
 ```bash
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage3-unverified-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage4-unverified-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_kernels.py
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage3-unverified-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage4-unverified-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_numeric.py
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage3-unverified-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage4-unverified-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_indexer.py
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage4-unverified-cu130.sif \
+  python3 /opt/deepseek-sm80/verify_sm80_engram.py
 ```
 
 **Stop rules:** no inference claim if source or GPU numerical probes fail.
