@@ -12,11 +12,12 @@
 - Runtime: vLLM **v0.32.0**, commit
   `5df63a7203cdb9328d824a27b682e77c7b9928be`.
   Container: `vllm/vllm-openai:v0.32.0` (CUDA 13.0 default).
-- A100 80 GB ×8 (TP8) is the first functional target; ×16 is a separate
-  **single-node TP16** experiment only after TP8 accuracy and kernel probes pass.
-  Two nodes with 8 cards each are **not** an automatically valid TP16/PP2 setup;
-  PP group placement and NCCL must be validated, and splitting an index-sharing
-  layer group across PP ranks is unsupported upstream.
+- A100 80 GB ×8 (TP8) is the first functional target. The checkpoint has
+  **o_groups=8**, so native TP16 violates its grouped output projection
+  topology. On 16 GPUs, run **two independent TP8 replicas** on one host
+  (\`serve_two_tp8.sh\`) or one TP8 server per 8-GPU host. TP8×DP2 or
+  TP8×PP2 require separate distributed integration and verification;
+  PP cuts through index-sharing groups are unsupported upstream.
 - The official recipe does **not** claim A100 support. Upstream
   [issue #57144](https://github.com/vllm-project/vllm/issues/57144) tracks the
   missing SM80 sparse MLA, indexer, FP8 cache and other fallbacks.
@@ -91,3 +92,32 @@ that the new release runs on A100.
 - [A100 SM80 support issue](https://github.com/vllm-project/vllm/issues/57144)
 - [Earlier working SM80 implementation](https://github.com/wtdcode/vllm-backport)
 - [This repository's GLM-5.3 SM80 reference](https://github.com/stozpark/glm53-flash-sm80-cu129)
+
+## Implemented migration artifacts
+
+- `latest/VERSION.env`: v0.32.0, CUDA 13 default image, 1017 model.
+- `latest/port_sm80_stage1.py`: exact-source guarded insertion of Ampere
+  class/registry into modern `deepseek_v41` package; copies pinned FP8
+  helpers and Triton paged-MQA fallback from the older backport.
+- `latest/ampere_sparse.py`: provisional SM80 backend adapter based on ROCm
+  reference Triton path. Registration alone is NOT sufficient for inference.
+- `latest/Singularity.def`, `latest/build_sif.sh`: produce an explicitly
+  marked **stage1** CUDA13 SIF with source/bytecode checks.
+- `latest/audit_source.py`: baseline vs stage1 source audits; optional
+  physical A100/CUDA checks and `o_groups` model verification.
+- `latest/serve_a100.sh`: experimental TP8 launcher, text-only default,
+  eager-first configuration. Requires ALLOW_EXPERIMENTAL=1.
+- `latest/serve_two_tp8.sh`: two independent TP8 servers when 16 local
+  GPUs are available; TP16 is rejected.
+
+Build from repository root:
+```bash
+bash ./latest/build_sif.sh
+# After source-level stage1 build, and only for a diagnostic A100 run:
+ALLOW_EXPERIMENTAL=1 SIF_PATH="$PWD/deepseek-v41-flash-sm80-v0320-stage1-cu130.sif" \\
+  MODEL_PATH=/models/DeepSeek-V4.1-Flash-1017 \\
+  bash ./latest/serve_a100.sh
+```
+
+This does not imply that A100 model serving has passed. It is a reproducible
+first integration step with explicit errors instead of a false success.
