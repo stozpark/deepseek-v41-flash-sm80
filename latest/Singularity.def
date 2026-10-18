@@ -13,6 +13,7 @@ From: vllm/vllm-openai:v0.32.0
   latest/port_sm80_stage1.py /opt/deepseek-sm80/latest/port_sm80_stage1.py
   latest/ampere_sparse.py /opt/deepseek-sm80/latest/ampere_sparse.py
   latest/audit_source.py /opt/deepseek-sm80/audit_source.py
+  latest/verify_sm80_kernels.py /opt/deepseek-sm80/verify_sm80_kernels.py
   patches/vendor/vllm/v1/attention/ops/fp8_sm80.py /opt/deepseek-sm80/patches/vendor/vllm/v1/attention/ops/fp8_sm80.py
   patches/vendor/vllm/v1/attention/ops/mqa_logits_triton.py /opt/deepseek-sm80/patches/vendor/vllm/v1/attention/ops/mqa_logits_triton.py
 
