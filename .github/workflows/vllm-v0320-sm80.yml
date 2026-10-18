@@ -50,13 +50,13 @@ jobs:
       - name: Verify launcher dry-runs and TP16 rejection
         run: |
           set -euo pipefail
-          DRY_RUN=1 TP_SIZE=8 ./latest/serve_a100.sh > /tmp/serve-a100.txt
+          DRY_RUN=1 TP_SIZE=8 bash ./latest/serve_a100.sh > /tmp/serve-a100.txt
           grep -q 'TRITON_MLA_SPARSE_DSV41' /tmp/serve-a100.txt
           grep -q 'DeepSeek-V4.1-Flash-1017' /tmp/serve-a100.txt
-          if DRY_RUN=1 TP_SIZE=16 ./latest/serve_a100.sh; then
+          if DRY_RUN=1 TP_SIZE=16 bash ./latest/serve_a100.sh; then
             echo 'Unexpected native TP16 acceptance' >&2; exit 1
           fi
-          DRY_RUN=1 ./latest/serve_two_tp8.sh > /tmp/two-tp8.txt
+          DRY_RUN=1 bash ./latest/serve_two_tp8.sh > /tmp/two-tp8.txt
           grep -q 'GPUs=0,1,2,3,4,5,6,7' /tmp/two-tp8.txt
           grep -q 'GPUs=8,9,10,11,12,13,14,15' /tmp/two-tp8.txt
       - name: Audit pristine upstream and plan pinned patch
