@@ -20,6 +20,7 @@ PINNED_BLOBS = {
     "models/deepseek_v41/nvidia/model.py": "8ec0155f736a118e7a20370c3cd1d2a7a06cff87",
     "v1/attention/backends/registry.py": "207c112a384c1e1450362c7c91ac31893fd783bd",
     "model_executor/kernels/linear/scaled_mm/cutlass.py": "a541debfe9f3595f31d08e7685725d18b43c64ac",
+    "v1/attention/ops/rocm_aiter_mla_sparse.py": "6a93d21511277f713b610da1f6deb4dac930b8cf",
 }
 ROOT_OF_REPO = Path(__file__).resolve().parent.parent
 FILES_TO_COPY = {
@@ -80,6 +81,20 @@ def build_changes(root: Path) -> dict[Path, bytes]:
                 "        \"vllm.models.deepseek_v41.ampere.ampere_sparse.\"\n"
                 "        \"DeepseekV41AmpereMLASparseBackend\"\n"
                 "    )\n" + anchor, rel)
+        elif rel.endswith("rocm_aiter_mla_sparse.py"):
+            # Upstream PR #62197: non-GFX942/GFX950 fallback leaves inverse
+            # RoPE to the caller. The original method falsely reports those
+            # output rows as already rotated. SM80 reuses this fallback.
+            anchor = (
+                "    return output.shape[0] if inv_rope_positions is not None else 0\\n"
+            )
+            replacement = (
+                "    fused_inv_rope = (\\n"
+                "        inv_rope_positions is not None and (_ON_GFX942 or _ON_GFX950)\\n"
+                "    )\\n"
+                "    return output.shape[0] if fused_inv_rope else 0\\n"
+            )
+            src = replace_once(src, anchor, replacement, rel)
         elif rel.endswith("scaled_mm/cutlass.py"):
             anchor = (
                 '        if not cutlass_fp8_supported():\n'
