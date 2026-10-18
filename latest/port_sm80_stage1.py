@@ -63,18 +63,14 @@ def build_changes(root: Path) -> dict[Path, bytes]:
             )
         src = raw.decode("utf-8")
         if rel.endswith("nvidia/model.py"):
-            anchor = (
-                "from vllm.models.deepseek_v41.nvidia.flashmla "
-                "import DeepseekV4FlashMLAAttention\n"
-            )
-            src = replace_once(src, anchor,
-                anchor + "from vllm.models.deepseek_v41.ampere.ampere_sparse "
-                "import DeepseekV41AmpereMLAAttention\n", rel)
             anchor = "    device_capability = current_platform.get_device_capability()\n"
             src = replace_once(src, anchor, anchor +
                 "    if device_capability is not None and device_capability.major == 8:\n"
                 "        if backend not in (None, AttentionBackendEnum.TRITON_MLA_SPARSE_DSV41):\n"
                 "            raise ValueError(\"A100 SM80 requires TRITON_MLA_SPARSE_DSV41\")\n"
+                "        from vllm.models.deepseek_v41.ampere.ampere_sparse import (\n"
+                "            DeepseekV41AmpereMLAAttention,\n"
+                "        )\n"
                 "        return DeepseekV41AmpereMLAAttention\n", rel)
         elif rel.endswith("registry.py"):
             anchor = "    FLASHINFER_MLA_SPARSE_DSV41 = (\n"
