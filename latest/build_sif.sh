@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Experimental vLLM 0.32.0 A100 build; produces stage-1 source integration only.
+# Experimental vLLM 0.32.0 A100 build; produces stage-3 source integration only.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
@@ -48,12 +48,12 @@ fi
 
 BUILD_ARGS="${BUILD_ARGS:---fakeroot}"
 read -r -a EXTRA_ARGS <<< "${BUILD_ARGS}"
-echo "[EXPERIMENTAL] Source-port stage1 SIF, NOT a GPU-tested serving image"
+echo "[EXPERIMENTAL] Source-port stage3 SIF, NOT a GPU-tested serving image"
 echo "vLLM=${VLLM_VERSION} image=${VLLM_IMAGE} cuda>=${CUDA_MIN_MAJOR}"
 (
   cd "${ROOT}"
   "${BUILDER}" build "${EXTRA_ARGS[@]}" "${OUT}" "${DEF}"
 )
-"${BUILDER}" exec "${OUT}" python3 /opt/deepseek-sm80/audit_source.py --mode port
-echo "STAGE1_BUILD_PASS: ${OUT}"
-echo "WARNING: SM80 FP8 cache/indexer/Engram kernel integration is incomplete."
+"${BUILDER}" exec "${OUT}" python3 /opt/deepseek-sm80/audit_source.py --mode indexer
+echo "STAGE3_SOURCE_BUILD_PASS: ${OUT}"
+echo "WARNING: physical A100 FP8/MLA/indexer numerics and weight-loaded 1017 serving are UNVERIFIED."
