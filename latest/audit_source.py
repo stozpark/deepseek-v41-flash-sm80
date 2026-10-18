@@ -57,7 +57,7 @@ def check_source(root: Path, mode: str) -> list[str]:
     if (root / "models/deepseek_v4_1").exists():
         fail("old deepseek_v4_1 package found: not the clean v0.32.0 baseline")
     checks.append("renamed_v41_package")
-    if mode in ("port", "numeric", "indexer"):
+    if mode in ("port", "numeric", "indexer", "engram"):
         must_include(
             root,
             f"{MODEL_PACKAGE}/ampere/ampere_sparse.py",
@@ -71,7 +71,7 @@ def check_source(root: Path, mode: str) -> list[str]:
         must_include(root, "v1/attention/ops/fp8_sm80.py", ("get_e4m3fn_bf16_lut",))
         must_include(root, "v1/attention/ops/mqa_logits_triton.py", ("fp8_paged_mqa_logits_triton",))
         checks.append("stage1_sm80_backend_and_kernel_files")
-    if mode in ("numeric", "indexer"):
+    if mode in ("numeric", "indexer", "engram"):
         numeric_sources = [
             "models/deepseek_v41/common/ops/cache_utils.py",
             "models/deepseek_v41/common/ops/fused_compress_quant_cache.py",
@@ -89,7 +89,7 @@ def check_source(root: Path, mode: str) -> list[str]:
         if "return output.shape[0] if fused_inv_rope else 0" not in rope:
             fail("inverse RoPE return contract is not fixed")
         checks.append("stage2_sm80_fp8_numeric_source_paths")
-    if mode == "indexer":
+    if mode in ("indexer", "engram"):
         source=(root / "model_executor/layers/sparse_attn_indexer.py").read_text()
         for needed in (
             "def _sm80_indexer_fallback",
@@ -101,6 +101,13 @@ def check_source(root: Path, mode: str) -> list[str]:
             if needed not in source:
                 fail(f"SM80 indexer is missing {needed}")
         checks.append("stage3_deepgemm_free_sm80_indexer")
+    if mode == "engram":
+        source=(root / "models/deepseek_v41/common/engram.py").read_text()
+        for required in ("SOFTWARE_FP8", "_decode_fp8_f32(values, False)",
+                         "weight.to(tl.pointer_type(tl.uint8))"):
+            if required not in source:
+                fail(f"Engram SM80 lookup source missing {required}")
+        checks.append("stage4_engram_byte_dequant_and_lookup")
     return checks
 
 
@@ -132,7 +139,7 @@ def runtime_audit() -> dict:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--mode", choices=("baseline", "port", "numeric", "indexer"), default="baseline")
+    p.add_argument("--mode", choices=("baseline", "port", "numeric", "indexer", "engram"), default="baseline")
     p.add_argument("--source-root", type=Path, help="vllm Python package directory")
     p.add_argument("--runtime", action="store_true", help="require CUDA>=13 and A100")
     p.add_argument("--model-config", type=Path, help="optional DeepSeek 1017 config.json")
