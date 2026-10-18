@@ -105,7 +105,7 @@ that the new release runs on A100.
   marked **stage1** CUDA13 SIF with source/bytecode checks.
 - `latest/audit_source.py`: baseline vs stage1 source audits; optional
   physical A100/CUDA checks and `o_groups` model verification.
-- `latest/serve_a100.sh`: experimental TP8 launcher, text-only default,
+- `latest/verify_sm80_kernels.py`: A100 live backend import, SM80 CUTLASS guard,\n  MXFP4/MXFP8 Marlin availability, software E4M3 LUT and Triton paged-MQA\n  tail probes. A PASS is necessary but not an end-to-end model validation.\n- `latest/serve_a100.sh`: experimental TP8 launcher, text-only default,
   eager-first configuration. Requires ALLOW_EXPERIMENTAL=1.
 - `latest/serve_two_tp8.sh`: two independent TP8 servers when 16 local
   GPUs are available; TP16 is rejected.
