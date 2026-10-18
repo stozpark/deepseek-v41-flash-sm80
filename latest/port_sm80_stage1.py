@@ -86,13 +86,13 @@ def build_changes(root: Path) -> dict[Path, bytes]:
             # RoPE to the caller. The original method falsely reports those
             # output rows as already rotated. SM80 reuses this fallback.
             anchor = (
-                "    return output.shape[0] if inv_rope_positions is not None else 0\\n"
+                "    return output.shape[0] if inv_rope_positions is not None else 0\n"
             )
             replacement = (
-                "    fused_inv_rope = (\\n"
-                "        inv_rope_positions is not None and (_ON_GFX942 or _ON_GFX950)\\n"
-                "    )\\n"
-                "    return output.shape[0] if fused_inv_rope else 0\\n"
+                "    fused_inv_rope = (\n"
+                "        inv_rope_positions is not None and (_ON_GFX942 or _ON_GFX950)\n"
+                "    )\n"
+                "    return output.shape[0] if fused_inv_rope else 0\n"
             )
             src = replace_once(src, anchor, replacement, rel)
         elif rel.endswith("scaled_mm/cutlass.py"):
