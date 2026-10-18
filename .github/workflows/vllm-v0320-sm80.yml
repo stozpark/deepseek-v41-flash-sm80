@@ -43,7 +43,7 @@ jobs:
       - name: Python and Bash syntax
         run: |
           set -euo pipefail
-          python3 -m py_compile latest/audit_source.py latest/port_sm80_stage1.py latest/port_sm80_numeric.py latest/ampere_sparse.py latest/verify_sm80_kernels.py
+          python3 -m py_compile latest/audit_source.py latest/port_sm80_stage1.py latest/port_sm80_numeric.py latest/ampere_sparse.py latest/verify_sm80_kernels.py latest/verify_sm80_numeric.py
           python3 -m py_compile patches/vendor/vllm/v1/attention/ops/fp8_sm80.py
           python3 -m py_compile patches/vendor/vllm/v1/attention/ops/mqa_logits_triton.py
           for f in latest/*.sh; do bash -n "$f"; done
@@ -82,6 +82,7 @@ jobs:
           python3 latest/port_sm80_numeric.py --skip-version-check --vllm-root upstream/vllm --dry-run
           python3 latest/port_sm80_numeric.py --skip-version-check --vllm-root upstream/vllm
           python3 latest/audit_source.py --source-root upstream/vllm --mode numeric
+          python3 -m py_compile latest/verify_sm80_numeric.py
           if python3 latest/port_sm80_numeric.py --skip-version-check --vllm-root upstream/vllm; then
             echo 'ERROR: numeric patch was silently applied twice' >&2
             exit 1
