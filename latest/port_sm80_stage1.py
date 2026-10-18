@@ -19,6 +19,7 @@ EXPECTED_VERSION = "0.32.0"
 PINNED_BLOBS = {
     "models/deepseek_v41/nvidia/model.py": "8ec0155f736a118e7a20370c3cd1d2a7a06cff87",
     "v1/attention/backends/registry.py": "207c112a384c1e1450362c7c91ac31893fd783bd",
+    "model_executor/kernels/linear/scaled_mm/cutlass.py": "a541debfe9f3595f31d08e7685725d18b43c64ac",
 }
 ROOT_OF_REPO = Path(__file__).resolve().parent.parent
 FILES_TO_COPY = {
@@ -79,6 +80,20 @@ def build_changes(root: Path) -> dict[Path, bytes]:
                 "        \"vllm.models.deepseek_v41.ampere.ampere_sparse.\"\n"
                 "        \"DeepseekV41AmpereMLASparseBackend\"\n"
                 "    )\n" + anchor, rel)
+        elif rel.endswith("scaled_mm/cutlass.py"):
+            anchor = (
+                "        if not cutlass_fp8_supported():\\n"
+                "            return False, \\"CUTLASS FP8 kernels not available\\"\\n"
+            )
+            replacement = (
+                "        if compute_capability is None:\\n"
+                "            capability = current_platform.get_device_capability()\\n"
+                "            compute_capability = -1 if capability is None else capability.to_int()\\n"
+                "        if compute_capability < 89:\\n"
+                "            return False, \\"CUTLASS FP8 tensor-core MMA needs SM89+\\"\\n"
+            ) + anchor
+            # Anchor occurs only in the FP8 class, not in Int8.
+            src = replace_once(src, anchor, replacement, rel)
         updates[path] = src.encode("utf-8")
     for from_rel, dest_rel in FILES_TO_COPY.items():
         dest = root / dest_rel
