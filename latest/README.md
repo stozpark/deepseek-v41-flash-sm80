@@ -1,123 +1,119 @@
-# vLLM 0.32.0 / DeepSeek-V4.1-Flash-1017 / A100 SM80 migration
+# DeepSeek V4.1 Flash 1017 — vLLM 0.32.0 on A100 SM80
 
-> **Port in progress — NOT A100-serving-validated.** This is an isolated workstream.
-> The repository root's CUDA 13 image + 0909 25-file patch remains a historical,
-> independently replay-verified baseline. **Do not apply that patch to vLLM 0.32.0.**
+> **Experimental source integration only.** GitHub Actions validates exact
+> upstream-source patch replay and Python/Bash syntax. **Real NVIDIA A100
+> numerical parity, SIF build, and full checkpoint serving have NOT been
+> verified yet.** Do not merge this branch or put its server on production.
 
-## Ground truth (2026-10-18)
+## Immutable upstream baseline
 
-- Model: `deepseek-ai/DeepSeek-V4.1-Flash-1017`. The official vLLM
-  [recipe](https://recipes.vllm.ai/deepseek-ai/DeepSeek-V4.1-Flash) selects
-  this new checkpoint; same config/tokenizer as 0909, different weights.
-- Runtime: vLLM **v0.32.0**, commit
-  `5df63a7203cdb9328d824a27b682e77c7b9928be`.
-  Container: `vllm/vllm-openai:v0.32.0` (CUDA 13.0 default).
-- A100 80 GB ×8 (TP8) is the first functional target. The checkpoint has
-  **o_groups=8**, so native TP16 violates its grouped output projection
-  topology. On 16 GPUs, run **two independent TP8 replicas** on one host
-  (`serve_two_tp8.sh`) or one TP8 server per 8-GPU host. TP8×DP2 or
-  TP8×PP2 require separate distributed integration and verification;
-  PP cuts through index-sharing groups are unsupported upstream.
-- Two TP8 replicas use separate copies of the Engram CPU-offload tables; provision substantial RAM (preferably 512 GiB+ for a dual-server diagnostic) and do not assume 16 GPU HBM eliminates host-memory constraints.\n- The official recipe does **not** claim A100 support. Upstream
-  [issue #57144](https://github.com/vllm-project/vllm/issues/57144) tracks the
-  missing SM80 sparse MLA, indexer, FP8 cache and other fallbacks.
+- **Model:** `deepseek-ai/DeepSeek-V4.1-Flash-1017`, verified against
+  [the official vLLM recipe](https://recipes.vllm.ai/deepseek-ai/DeepSeek-V4.1-Flash).
+- **vLLM:** `v0.32.0`, upstream commit
+  `5df63a7203cdb9328d824a27b682e77c7b9928be`,
+  original container `vllm/vllm-openai:v0.32.0`.
+- **CUDA:** 13.0 or newer. **GPU:** NVIDIA A100/A800 SM80, 8x80 GB, TP8.
+- **16 GPU:** independent 2×TP8 replicas, not TP16 (`o_groups=8`). With
+  two 8-GPU nodes, launch each host independently. Reserve sufficient system
+  RAM for separate Engram host-offload tables; 512 GiB or more may be
+  appropriate for two full replicas, depending on memory placement.
+- Older root SIF, vendor snapshot, and `sm80-cu130-minimal.patch` target
+  the **0909** branch and old `deepseek_v4_1` Python package. **Never
+  overlay them wholesale onto v0.32.0's `deepseek_v41` implementation.**
 
-## Migration warning
+## Work implemented
 
-The current `main` overlay targets the launch-only
-`deepseekv41-flash-0909` image. In vLLM v0.32.0 the model source package
-is `vllm/models/deepseek_v41` rather than
-`vllm/models/deepseek_v4_1`. The old patch also overrides code
-that upstream has since optimized (new sparse indexer, Engram, mHC,
-vision CUDA graphs, SWA bounded replay). Blind overlay or renaming is unsafe.
+| Stage | Patch | Functionality | Verification in this repo |
+| --- | --- | --- | --- |
+| 1 | `port_sm80_stage1.py` | Exact-source guarded Ampere sparse MLA backend, SM80 helper module, CUTLASS FP8 guard, and upstream inverse-RoPE bugfix [#62197](https://github.com/vllm-project/vllm/pull/62197) | CI source replay and six-case `test_inverse_rope_contract.py` |
+| 2 | `port_sm80_numeric.py` | Software E4M3FN encode/decode replacing SM80-incompatible native Triton casts in paged KV, compressor, indexer K, and sparse attention; preserves UE8M0 and FP4-rounded scale semantics | CI bytecode and exact-source checks, `verify_sm80_numeric.py` prepared for GPU |
+| 3 | `port_sm80_indexer.py` | Remove DeepGEMM requirement on SM80, quantize Q to correct FP8 bytes, use BF16 Tensor Core Triton `fp8_mqa_logits_triton`/`fp8_paged_mqa_logits_triton`; preserve upstream two-level candidate masking | CI patch replay + `verify_sm80_indexer.py` prepared for GPU |
 
-## Bring-up gates
+**Accuracy policy:** source CI passing is **not** a successful numerical
+benchmark. The real A100 script checks E4M3FN bitwise parity vs PyTorch,
+all 256 E4M3FN codewords, mixed sparse MLA and SWA output vs independent
+PyTorch attention, inverse RoPE and NoPE invariance, paged FP8 indexer
+logits and rank-consistent Top-K, candidate-block masking, and causal tails.
+Any assertion or unsupported configuration stops the launcher before model
+load. `ALLOWED_EXPERIMENTAL` is NOT a bypass around numerical tests;
+the correct opt-in is `ALLOW_EXPERIMENTAL=1`.
 
-1. **Baseline/source audit.** Use `latest/audit_source.py --mode baseline`
-   in an unpatched 0.32.0 image; verify image, CUDA, expected v41 package.
-   This is deliberately **not** a passing A100 deployment.
-2. **Port SM80 kernels, then source audit.** Implement in the v0.32.0
-   source tree; **do not replace entire upstream model modules**:
-   - Ampere sparse MLA + SWA backend selection and engine registration.
-   - Software/TileLang FP8 E4M3 cache write/read (including V4.1 compressed
-     KV, indexer K, Engram) without SM89 native FP8 MMA.
-   - DeepGEMM-free paged-MQA logits/indexer (128-token block pages),
-     two-level candidate filtering, and large-context int64 addressing.
-   - MXFP4 expert Marlin or bf16-dequant, MXFP8 linear fallback,
-     no unconditional Hopper/Blackwell CuTe/DeepGEMM dispatch.
-   - Correct WO_A and mHC fallback, preservation of vision and DSML parsers.
-3. **Unit + kernel correctness on an A100.** At least tail mask, fragmented
-   block tables, strided gather, >65K positions, chunked prefill,
-   candidate mask, FP8 software conversion, Engram lookups.
-4. **Actual TP8 model load.** Text-only 2K/8K first, then vision, tools,
-   reasoning, 32K/128K; compare deterministic outputs or logits against
-   a verified reference. Enable graphs, prefix cache, and speculative
-   decoding **only after** an eager baseline passes.
-5. **16 GPU.** First validate TP16 on a machine with 16 *locally visible*
-   A100s. For 8+8 multi-node, produce separate distributed validation;
-   `TP8×PP2` is not a drop-in substitute.
-
-## Local commands (diagnostic, not proof of functionality)
+## Source validation (no GPU required)
 
 ```bash
-# From inside the pinned upstream vLLM 0.32.0 container:
-python3 latest/audit_source.py --mode baseline
+git fetch origin vllm-v0320-sm80
+git switch vllm-v0320-sm80
 
-# Static audit once a true SM80 port exists:
-python3 latest/audit_source.py --mode port
-
-# Only print server commands; never requires a GPU:
-DRY_RUN=1 TP_SIZE=8  bash ./latest/serve_a100.sh
-DRY_RUN=1 bash ./latest/serve_two_tp8.sh
-
-# Actual launch requires a separately built and verified SM80-enabled SIF;
-# the original 0909 SIF is intentionally rejected.
-SIF_PATH=/path/to/v0320-sm80-verified.sif \
-  MODEL_PATH=/models/DeepSeek-V4.1-Flash-1017 \
-  TP_SIZE=8 ./latest/serve_a100.sh
+# GitHub Actions automatically checks pinned vLLM-0.32.0 source, all patches,
+# Python/Bash syntax, inverse-RoPE semantics and fail-closed reapplication.
+# Validate the launch flags without a GPU:
+DRY_RUN=1 bash latest/serve_a100.sh
+DRY_RUN=1 bash latest/serve_two_tp8.sh
 ```
 
-## Tested vs untested
+## Apptainer/Singularity build (CUDA 13)
 
-This track records an upstream version/architecture audit and a controlled
-launcher. **It does not yet contain a validated SM80 kernel patch for 0.32.0,
-a completed v0.32.0 SIF, or a physical A100 serving benchmark.**
-Use the existing historical baseline only for comparison; not as evidence
-that the new release runs on A100.
-
-## References
-
-- [vLLM V4.1 model recipe](https://recipes.vllm.ai/deepseek-ai/DeepSeek-V4.1-Flash)
-- [vLLM 0.32.0 release](https://github.com/vllm-project/vllm/releases/tag/v0.32.0)
-- [A100 SM80 support issue](https://github.com/vllm-project/vllm/issues/57144)
-- [Earlier working SM80 implementation](https://github.com/wtdcode/vllm-backport)
-- [This repository's GLM-5.3 SM80 reference](https://github.com/stozpark/glm53-flash-sm80-cu129)
-
-## Implemented migration artifacts
-
-- `latest/VERSION.env`: v0.32.0, CUDA 13 default image, 1017 model.
-- `latest/port_sm80_stage1.py`: exact-source guarded insertion of Ampere
-  class/registry into modern `deepseek_v41` package; copies pinned FP8
-  helpers and Triton paged-MQA fallback from the older backport.
-- `latest/ampere_sparse.py`: provisional SM80 backend adapter based on ROCm
-  reference Triton path. Registration alone is NOT sufficient for inference.
-- `latest/Singularity.def`, `latest/build_sif.sh`: produce an explicitly
-  marked **stage1** CUDA13 SIF with source/bytecode checks.
-- `latest/audit_source.py`: baseline vs stage1 source audits; optional
-  physical A100/CUDA checks and `o_groups` model verification.
-- `latest/verify_sm80_kernels.py`: A100 live backend import, SM80 CUTLASS guard,\n  MXFP4/MXFP8 Marlin availability, software E4M3 LUT and Triton paged-MQA\n  tail probes. A PASS is necessary but not an end-to-end model validation.\n- `latest/serve_a100.sh`: experimental TP8 launcher, text-only default,
-  eager-first configuration. Requires ALLOW_EXPERIMENTAL=1.
-- `latest/serve_two_tp8.sh`: two independent TP8 servers when 16 local
-  GPUs are available; TP16 is rejected.
-
-Build from repository root:
 ```bash
-bash ./latest/build_sif.sh
-# After source-level stage1 build, and only for a diagnostic A100 run:
-ALLOW_EXPERIMENTAL=1 SIF_PATH="$PWD/deepseek-v41-flash-sm80-v0320-stage1-cu130.sif" \\
-  MODEL_PATH=/models/DeepSeek-V4.1-Flash-1017 \\
-  bash ./latest/serve_a100.sh
+# If connected to Docker Hub or with the pinned v0.32.0 image cached:
+bash latest/build_sif.sh
+
+# In the restricted corporate network, you can provide an existing SIF
+# containing the exact upstream vLLM 0.32.0 + CUDA >=13:
+BASE_SIF=/path/to/upstream-vllm0320-cu130.sif bash latest/build_sif.sh
 ```
 
-This does not imply that A100 model serving has passed. It is a reproducible
-first integration step with explicit errors instead of a false success.
+The resulting default file is
+`deepseek-v41-flash-sm80-v0320-stage3-unverified-cu130.sif`. The build
+checks source patch integrity and inverse-RoPE completion, not CUDA runtime.
+
+## **Actual A100 validation** (mandatory)
+
+```bash
+# This command first runs all diagnostics on GPU 0 using Apptainer --nv,
+# then, only if all pass, attempts the 1017 TP8 server with safe constraints:
+ALLOW_EXPERIMENTAL=1 \
+MODEL_PATH=/models/DeepSeek-V4.1-Flash-1017 \
+bash latest/serve_a100.sh
+```
+
+The launcher intentionally chooses 32K maximum context, 2048 batched
+tokens, concurrency 4, eager attention, 128-token indexer pages, explicit
+FP8 indexer, `sparse_indexer_topk_backend=torch`, no speculative decode,
+no DCP/PCP, no prefix caching or bounded SWA replay, no CuMem allocator.
+`ENABLE_VISION=0` by default; vision is a subsequent evaluation step.
+The configured OpenAI API port is 18005.
+
+Standalone GPU diagnostics (after SIF build):
+
+```bash
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage3-unverified-cu130.sif \
+  python3 /opt/deepseek-sm80/verify_sm80_kernels.py
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage3-unverified-cu130.sif \
+  python3 /opt/deepseek-sm80/verify_sm80_numeric.py
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage3-unverified-cu130.sif \
+  python3 /opt/deepseek-sm80/verify_sm80_indexer.py
+```
+
+**Stop rules:** no inference claim if source or GPU numerical probes fail.
+Before ready-to-merge require 1017 real weights TP8 load and deterministic
+text + vision + tool + reasoning comparison with a supported reference,
+multi-request tests with fragmented KV pages, indexer candidate routing
+and context-length expansion (2K → 8K → 32K → 128K). CUDA graphs, prefix
+cache, DSpark, pipeline/context parallelism and 1M contexts are unsupported
+until separately verified. No model-quality results can be inferred
+from bytecode tests alone.
+
+## Upstream changes after v0.32.0
+
+See [UPSTREAM_AUDIT_2026-10-19.md](UPSTREAM_AUDIT_2026-10-19.md).
+Critical numerical fix [#62197](https://github.com/vllm-project/vllm/pull/62197)
+is integrated. Evaluated but not blindly imported:
+[#61938](https://github.com/vllm-project/vllm/pull/61938) (Triton
+MLA int32 overflow),
+[#60493](https://github.com/vllm-project/vllm/pull/60493) (indexer metadata
+memory sizing),
+[#62208](https://github.com/vllm-project/vllm/pull/62208) (PP-stage
+Engram correctness), and
+[#62259](https://github.com/vllm-project/vllm/pull/62259) /
+[#62290](https://github.com/vllm-project/vllm/pull/62290) (truncated DSML
+tool-call output).
