@@ -118,5 +118,9 @@ if [[ -f "${MODEL_PATH}/config.json" ]]; then
 fi
 "${RUNNER}" exec --nv "${BIND_ARGS[@]}" "${SIF_PATH}" "${AUDIT[@]}"
 
+echo "[experimental] Probe live CUDA SM80 kernels (NOT model validation)"
+"${RUNNER}" exec --nv "${BIND_ARGS[@]}" "${SIF_PATH}" \\
+  python3 /opt/deepseek-sm80/verify_sm80_kernels.py
+
 echo "[experimental] Starting vLLM; no A100 accuracy/soak validation exists yet"
 exec "${RUNNER}" exec --nv "${BIND_ARGS[@]}" "${SIF_PATH}" "${ARGS[@]}"
