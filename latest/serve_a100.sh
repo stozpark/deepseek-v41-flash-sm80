@@ -60,7 +60,11 @@ ARGS=(
   --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}"
   --kv-cache-dtype fp8_ds_mla
   --engram-config '{"cpu_offload":true}'
-  --attention-config '{"backend":"TRITON_MLA_SPARSE_DSV41"}'
+  --attention-config '{"backend":"TRITON_MLA_SPARSE_DSV41","indexer_kv_dtype":"fp8"}'
+  --kernel-config '{"sparse_indexer_topk_backend":"torch"}'
+  --block-size 128
+  --no-swa-bounded-replay
+  --no-enable-prefix-caching
   --tokenizer-mode deepseek_v41
   --reasoning-parser deepseek_v41
   --enable-auto-tool-choice
@@ -112,7 +116,7 @@ export NCCL_ALGO="${NCCL_ALGO:-Ring}"
 export NCCL_PROTO="${NCCL_PROTO:-Simple}"
 export PYTHONUNBUFFERED=1
 echo "[experimental] Running static + hardware audit (NOT an inference test)"
-AUDIT=(python3 /opt/deepseek-sm80/audit_source.py --mode numeric --runtime)
+AUDIT=(python3 /opt/deepseek-sm80/audit_source.py --mode indexer --runtime)
 if [[ -f "${MODEL_PATH}/config.json" ]]; then
   AUDIT+=(--model-config "${MODEL_PATH}/config.json")
 fi
@@ -125,6 +129,10 @@ echo "[experimental] Probe live CUDA SM80 kernels (NOT model validation)"
 echo "[experimental] Verify numerical output against independent A100 oracles"
 "${RUNNER}" exec --nv "${BIND_ARGS[@]}" "${SIF_PATH}" \
   python3 /opt/deepseek-sm80/verify_sm80_numeric.py
+
+echo "[experimental] Verify paged/sparse MQA logits, candidate masks and top-k"
+"${RUNNER}" exec --nv "${BIND_ARGS[@]}" "${SIF_PATH}" \
+  python3 /opt/deepseek-sm80/verify_sm80_indexer.py
 
 echo "[experimental] Starting vLLM; no A100 accuracy/soak validation exists yet"
 exec "${RUNNER}" exec --nv "${BIND_ARGS[@]}" "${SIF_PATH}" "${ARGS[@]}"
