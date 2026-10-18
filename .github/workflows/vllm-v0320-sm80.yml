@@ -74,7 +74,7 @@ jobs:
           python3 -m py_compile \
             upstream/vllm/models/deepseek_v41/nvidia/model.py \
             upstream/vllm/models/deepseek_v41/ampere/ampere_sparse.py \
-            upstream/vllm/v1/attention/backends/registry.py \\
+            upstream/vllm/v1/attention/backends/registry.py \
             upstream/vllm/model_executor/kernels/linear/scaled_mm/cutlass.py
       - name: Verify patch is fail-closed on double application
         run: |
