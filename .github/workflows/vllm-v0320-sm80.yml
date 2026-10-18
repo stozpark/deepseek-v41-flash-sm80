@@ -1,4 +1,4 @@
-name: vLLM-v0320-SM80-stage1-source-audit
+name: vLLM-v0320-SM80-3stage-source-audit
 
 on:
   push:
@@ -107,8 +107,8 @@ jobs:
             echo 'ERROR: version-guarded patch allowed a second application' >&2
             exit 1
           fi
-      - name: Publish stage1 status
+      - name: Publish source-validation status
         run: |
-          echo 'STAGE1_SOURCE_AUDIT_PASS'
+          echo 'STAGE3_SOURCE_AUDIT_PASS'
           echo 'NOT A100 INFERENCE VALIDATION.'
-          echo 'Next: SM80 kernel, indexer, Engram integration and physical GPU test.'
+          echo 'Next: physical A100 numeric parity, full model load, Engram and end-to-end comparison.'
