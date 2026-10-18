@@ -15,10 +15,10 @@
 - A100 80 GB ×8 (TP8) is the first functional target. The checkpoint has
   **o_groups=8**, so native TP16 violates its grouped output projection
   topology. On 16 GPUs, run **two independent TP8 replicas** on one host
-  (\`serve_two_tp8.sh\`) or one TP8 server per 8-GPU host. TP8×DP2 or
+  (`serve_two_tp8.sh`) or one TP8 server per 8-GPU host. TP8×DP2 or
   TP8×PP2 require separate distributed integration and verification;
   PP cuts through index-sharing groups are unsupported upstream.
-- The official recipe does **not** claim A100 support. Upstream
+- Two TP8 replicas use separate copies of the Engram CPU-offload tables; provision substantial RAM (preferably 512 GiB+ for a dual-server diagnostic) and do not assume 16 GPU HBM eliminates host-memory constraints.\n- The official recipe does **not** claim A100 support. Upstream
   [issue #57144](https://github.com/vllm-project/vllm/issues/57144) tracks the
   missing SM80 sparse MLA, indexer, FP8 cache and other fallbacks.
 
@@ -67,8 +67,8 @@ python3 latest/audit_source.py --mode baseline
 python3 latest/audit_source.py --mode port
 
 # Only print server commands; never requires a GPU:
-DRY_RUN=1 TP_SIZE=8  ./latest/serve_a100.sh
-DRY_RUN=1 TP_SIZE=16 ./latest/serve_a100.sh
+DRY_RUN=1 TP_SIZE=8  bash ./latest/serve_a100.sh
+DRY_RUN=1 bash ./latest/serve_two_tp8.sh
 
 # Actual launch requires a separately built and verified SM80-enabled SIF;
 # the original 0909 SIF is intentionally rejected.
