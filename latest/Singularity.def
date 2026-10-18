@@ -11,6 +11,7 @@ From: vllm/vllm-openai:v0.32.0
 
 %files
   latest/port_sm80_stage1.py /opt/deepseek-sm80/latest/port_sm80_stage1.py
+  latest/port_sm80_numeric.py /opt/deepseek-sm80/latest/port_sm80_numeric.py
   latest/ampere_sparse.py /opt/deepseek-sm80/latest/ampere_sparse.py
   latest/audit_source.py /opt/deepseek-sm80/audit_source.py
   latest/verify_sm80_kernels.py /opt/deepseek-sm80/verify_sm80_kernels.py
@@ -35,7 +36,8 @@ assert cuda and int(cuda.split(".")[0]) >= 13, cuda
 print("upstream vLLM 0.32.0 / CUDA >=13:", cuda)
 PY
   python3 /opt/deepseek-sm80/latest/port_sm80_stage1.py
-  python3 /opt/deepseek-sm80/audit_source.py --mode port
+  python3 /opt/deepseek-sm80/latest/port_sm80_numeric.py
+  python3 /opt/deepseek-sm80/audit_source.py --mode numeric
   echo "STAGE1_SOURCE_BUILT: GPU inference and kernel work remain unvalidated"
 
 %runscript
