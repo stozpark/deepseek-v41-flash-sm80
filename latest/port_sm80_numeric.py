@@ -63,7 +63,13 @@ def numeric_patch(root: Path) -> dict[Path, bytes]:
         rocm,
         "x_uint8.to(tl.float8e4nv, bitcast=True).to(tl.float32)",
         "_decode_fp8_f32(x_uint8, False)",
-        6, ROCM_REL,
+        2, ROCM_REL,
+    )
+    rocm = swap(
+        rocm,
+        "x_fp8 = x_uint8.to(tl.float8e4nv, bitcast=True)",
+        "x_fp8 = _decode_fp8_f32(x_uint8, False)",
+        4, ROCM_REL,
     )
     # Asserts no remaining direct E4M3 casts in this reused Triton attention
     # module; any future cast must be audited before a version bump.
