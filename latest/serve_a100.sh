@@ -16,7 +16,8 @@ MAX_NUM_SEQS="${MAX_NUM_SEQS:-4}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-18005}"
-ENABLE_VISION="${ENABLE_VISION:-0}"
+ENABLE_VISION="${ENABLE_VISION:-1}"
+ENABLE_DSPARK="${ENABLE_DSPARK:-0}"
 DRY_RUN="${DRY_RUN:-0}"
 ALLOW_EXPERIMENTAL="${ALLOW_EXPERIMENTAL:-0}"
 SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-deepseek-v41-flash-1017}"
@@ -37,6 +38,10 @@ for gpu in "${GPU_ARRAY[@]}"; do
 done
 if (( $(printf '%s\n' "${GPU_ARRAY[@]}" | sort -u | wc -l) != 8 )); then
   echo "ERROR: CUDA_VISIBLE_DEVICES must contain eight different IDs." >&2
+  exit 2
+fi
+if [[ "${ENABLE_DSPARK}" != 0 && "${ENABLE_DSPARK}" != 1 ]]; then
+  echo "ERROR: ENABLE_DSPARK must be 0 or 1." >&2
   exit 2
 fi
 if [[ "${ENABLE_VISION}" != 0 && "${ENABLE_VISION}" != 1 ]]; then
@@ -72,10 +77,13 @@ ARGS=(
   --disable-custom-all-reduce
   --enforce-eager
 )
+if [[ "${ENABLE_DSPARK}" == 1 ]]; then
+  ARGS+=(--speculative-config '{"method":"dspark","num_speculative_tokens":5,"use_local_argmax_reduction":true}')
+fi
 if [[ "${ENABLE_VISION}" == 0 ]]; then
   ARGS+=(--language-model-only)
 else
-  ARGS+=(--mm-encoder-tp-mode data)
+  ARGS+=(--mm-encoder-tp-mode data --limit-mm-per-prompt '{"image":8}')
 fi
 
 if [[ "${DRY_RUN}" == 1 ]]; then
@@ -116,7 +124,7 @@ export NCCL_ALGO="${NCCL_ALGO:-Ring}"
 export NCCL_PROTO="${NCCL_PROTO:-Simple}"
 export PYTHONUNBUFFERED=1
 echo "[experimental] Running static + hardware audit (NOT an inference test)"
-AUDIT=(python3 /opt/deepseek-sm80/audit_source.py --mode engram --runtime)
+AUDIT=(python3 /opt/deepseek-sm80/audit_source.py --mode dspark --runtime)
 if [[ -f "${MODEL_PATH}/config.json" ]]; then
   AUDIT+=(--model-config "${MODEL_PATH}/config.json")
 fi
@@ -138,5 +146,11 @@ echo "[experimental] Verify Engram E4M3/E8M0 packed bytes and BF16 values"
 "${RUNNER}" exec --nv "${BIND_ARGS[@]}" "${SIF_PATH}" \
   python3 /opt/deepseek-sm80/verify_sm80_engram.py
 
-echo "[experimental] Starting vLLM; no A100 accuracy/soak validation exists yet"
+if [[ "${ENABLE_DSPARK}" == 1 ]]; then
+  echo "[experimental] Verifying DSpark5 multi-token paged logits before start"
+  "${RUNNER}" exec --nv "${BIND_ARGS[@]}" "${SIF_PATH}" \
+    python3 /opt/deepseek-sm80/verify_sm80_dspark.py
+fi
+
+echo "[experimental] Starting vLLM; Vision/DSpark need end-to-end smoke tests"
 exec "${RUNNER}" exec --nv "${BIND_ARGS[@]}" "${SIF_PATH}" "${ARGS[@]}"
