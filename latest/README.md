@@ -65,7 +65,7 @@ BASE_SIF=/path/to/upstream-vllm0320-cu130.sif bash latest/build_sif.sh
 ```
 
 The resulting default file is
-`deepseek-v41-flash-sm80-v0320-stage5-engram-u8-cu130.sif`. The build
+`deepseek-v41-flash-sm80-v0320-stage5-qa2-cu130.sif`. The build
 checks source patch integrity and inverse-RoPE completion, not CUDA runtime.
 
 ## **Actual A100 validation** (mandatory)
@@ -88,15 +88,15 @@ The configured OpenAI API port is 18005.
 Standalone GPU diagnostics (after SIF build):
 
 ```bash
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-engram-u8-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-qa2-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_kernels.py
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-engram-u8-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-qa2-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_numeric.py
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-engram-u8-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-qa2-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_indexer.py
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-engram-u8-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-qa2-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_engram.py
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-engram-u8-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-qa2-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_dspark.py
 ```
 
@@ -146,14 +146,14 @@ rerunning the old, already-built `stage5-unverified` image.
 ```bash
 git switch vllm-v0320-sm80 && git pull --ff-only
 bash latest/build_sif.sh
-SIF=./deepseek-v41-flash-sm80-v0320-stage5-engram-u8-cu130.sif
+SIF=./deepseek-v41-flash-sm80-v0320-stage5-qa2-cu130.sif
 
 # Check import in the NEW image, with GPU:
 apptainer exec --nv "$SIF" python3 -c \
  'from vllm.v1.attention.ops.mqa_logits_triton import fp8_paged_mqa_logits_triton; print("SM80_MQA_IMPORT_PASS")'
 
 # Resume safe hardware test sequence (still experimental):
-SIF_PATH="$PWD/deepseek-v41-flash-sm80-v0320-stage5-engram-u8-cu130.sif" \
+SIF_PATH="$PWD/deepseek-v41-flash-sm80-v0320-stage5-qa2-cu130.sif" \
  ALLOW_EXPERIMENTAL=1 MODEL_PATH=/models/DeepSeek-V4.1-Flash-1017 \
  bash latest/serve_a100.sh
 ```
@@ -213,10 +213,64 @@ git switch vllm-v0320-sm80
 git pull --ff-only
 bash latest/build_sif.sh
 
-SIF="$PWD/deepseek-v41-flash-sm80-v0320-stage5-engram-u8-cu130.sif"
+SIF="$PWD/deepseek-v41-flash-sm80-v0320-stage5-qa2-cu130.sif"
 singularity exec --nv "$SIF" python3 /opt/deepseek-sm80/verify_sm80_engram.py
 ```
 
 Only after the above diagnostic passes should the complete launch guard
 sequence be retried. The preceding smoke tests do not prove full checkpoint
 correctness or the Engram pinned-CPU-UVA case.
+
+## Pre-release code review (2026-10-19): remaining blockers
+
+**No production sign-off.** Reviewed pinned vLLM 0.32.0 model architecture,
+launcher, BF16 WO_A projector, Engram UVA patch, Vision, DSpark5, sparse
+indexer and source-only CI. Important findings:
+
+1. The original `ampere_sparse.py` set `wo_a.is_bmm=True`, but inherited
+   the ROCm `_o_proj -> rocm_inv_rope_einsum` BF16 reference that expects
+   `is_bmm=False`. This can cause weight-layout or dequant mismatch even if
+   isolated sparse attention math tests pass. Removed the SM80 override and
+   added `test_sm80_woa_contract.py` to both CI and SIF build.
+2. Upstream [#62417](https://github.com/vllm-project/vllm/issues/62417):
+   **1017 + DSpark corrupts chat/thinking and tool calls on SM120** under
+   v0.32.0/nightly although no-spec is clean. This is NOT yet confirmed on
+   SM80, but is enough to gate deployment. `ENABLE_DSPARK=0` remains the
+   only recommended setting for initial model loading. Setting
+   `ENABLE_DSPARK=1` now requires the additional
+   `ALLOW_KNOWN_1017_DSPARK_CORRUPTION=1` diagnostic opt-in; it is
+   NOT recommended for production or tool automation.
+3. Isolated FP8/MLA/indexer tests do **not** certify the model's real
+   compressor writers, WO_A weight preparation or full 1017 generation.
+   `latest/verify_1017_serving_semantics.py` adds strict, model-loaded
+   chat answer, tool-call JSON, single/two-image color checks and an
+   optional greedy final-output comparison against a no-spec baseline.
+   This must pass sequential TP8 servers (no-spec first, DSpark second)
+   before speculative serving is considered.
+
+### Recommended A100 check (DSpark disabled)
+
+```bash
+git fetch origin vllm-v0320-sm80
+git switch vllm-v0320-sm80
+git pull --ff-only
+bash latest/build_sif.sh
+SIF="$PWD/deepseek-v41-flash-sm80-v0320-stage5-qa2-cu130.sif"
+
+# Earliest failing unit, including CPU-pinned UVA:
+singularity exec --nv "$SIF" python3 /opt/deepseek-sm80/verify_sm80_engram.py
+
+# Full server bring-up, still *not* a model accuracy guarantee:
+SIF_PATH="$SIF" ENABLE_VISION=1 ENABLE_DSPARK=0 \
+ ALLOW_EXPERIMENTAL=1 MODEL_PATH=/models/DeepSeek-V4.1-Flash-1017 \
+ bash latest/serve_a100.sh
+
+# From another terminal once the API server is ready:
+python3 latest/verify_1017_serving_semantics.py --vision \
+ --save outputs/baseline-nodspawn.json
+```
+
+Full model load, greedy chat/tool/image checks and multi-request soak testing
+on actual A100 are still mandatory. A successful GitHub source CI is
+insufficient. Do not claim DSpark5 safe just because the small kernel test
+passes; upstream #62417 demonstrates the gap.
