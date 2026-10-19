@@ -108,6 +108,14 @@ def check_source(root: Path, mode: str) -> list[str]:
             if required not in source:
                 fail(f"Engram SM80 lookup source missing {required}")
         checks.append("stage4_engram_byte_dequant_and_lookup")
+    if mode in ("port", "numeric", "indexer", "engram", "dspark"):
+        mqa = (root / "v1/attention/ops/mqa_logits_triton.py").read_text()
+        if "envs.VLLM_INDEXER_LOGITS_" in mqa:
+            fail("old SM80 MQA port uses vllm.envs attributes removed in 0.32.0")
+        for name in ("_indexer_int_env", "_indexer_factor_k_scale"):
+            if name not in mqa:
+                fail(f"missing SM80 MQA compatibility helper: {name}")
+        checks.append("v0320_mqa_env_api_compat")
     if mode == "dspark":
         source=(root / "v1/attention/ops/mqa_logits_triton.py").read_text()
         idx=(root / "model_executor/layers/sparse_attn_indexer.py").read_text()
