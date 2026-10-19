@@ -57,7 +57,7 @@ def check_source(root: Path, mode: str) -> list[str]:
     if (root / "models/deepseek_v4_1").exists():
         fail("old deepseek_v4_1 package found: not the clean v0.32.0 baseline")
     checks.append("renamed_v41_package")
-    if mode in ("port", "numeric", "indexer", "engram"):
+    if mode in ("port", "numeric", "indexer", "engram", "dspark"):
         must_include(
             root,
             f"{MODEL_PACKAGE}/ampere/ampere_sparse.py",
@@ -71,7 +71,7 @@ def check_source(root: Path, mode: str) -> list[str]:
         must_include(root, "v1/attention/ops/fp8_sm80.py", ("get_e4m3fn_bf16_lut",))
         must_include(root, "v1/attention/ops/mqa_logits_triton.py", ("fp8_paged_mqa_logits_triton",))
         checks.append("stage1_sm80_backend_and_kernel_files")
-    if mode in ("numeric", "indexer", "engram"):
+    if mode in ("numeric", "indexer", "engram", "dspark"):
         numeric_sources = [
             "models/deepseek_v41/common/ops/cache_utils.py",
             "models/deepseek_v41/common/ops/fused_compress_quant_cache.py",
@@ -89,7 +89,7 @@ def check_source(root: Path, mode: str) -> list[str]:
         if "return output.shape[0] if fused_inv_rope else 0" not in rope:
             fail("inverse RoPE return contract is not fixed")
         checks.append("stage2_sm80_fp8_numeric_source_paths")
-    if mode in ("indexer", "engram"):
+    if mode in ("indexer", "engram", "dspark"):
         source=(root / "model_executor/layers/sparse_attn_indexer.py").read_text()
         for needed in (
             "def _sm80_indexer_fallback",
@@ -101,13 +101,22 @@ def check_source(root: Path, mode: str) -> list[str]:
             if needed not in source:
                 fail(f"SM80 indexer is missing {needed}")
         checks.append("stage3_deepgemm_free_sm80_indexer")
-    if mode == "engram":
+    if mode in ("engram", "dspark"):
         source=(root / "models/deepseek_v41/common/engram.py").read_text()
         for required in ("SOFTWARE_FP8", "_decode_fp8_f32(values, False)",
                          "weight.to(tl.pointer_type(tl.uint8))"):
             if required not in source:
                 fail(f"Engram SM80 lookup source missing {required}")
         checks.append("stage4_engram_byte_dequant_and_lookup")
+    if mode == "dspark":
+        source=(root / "v1/attention/ops/mqa_logits_triton.py").read_text()
+        idx=(root / "model_executor/layers/sparse_attn_indexer.py").read_text()
+        for needle in ("context_lens_ptr + token_id", "q_offset = context_len - 1", "row_lens"):
+            if needle not in source:
+                fail(f"Missing DSpark5 per-query causal semantics: {needle}")
+        if "SM80 DSpark5 supports at most six target rows" not in idx:
+            fail("DSpark5 SM80 target indexer is not activated")
+        checks.append("stage5_dspark5_per_query_causal_mask")
     return checks
 
 
@@ -139,7 +148,7 @@ def runtime_audit() -> dict:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--mode", choices=("baseline", "port", "numeric", "indexer", "engram"), default="baseline")
+    p.add_argument("--mode", choices=("baseline", "port", "numeric", "indexer", "engram", "dspark"), default="baseline")
     p.add_argument("--source-root", type=Path, help="vllm Python package directory")
     p.add_argument("--runtime", action="store_true", help="require CUDA>=13 and A100")
     p.add_argument("--model-config", type=Path, help="optional DeepSeek 1017 config.json")
