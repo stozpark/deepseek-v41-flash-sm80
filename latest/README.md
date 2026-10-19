@@ -274,3 +274,33 @@ Full model load, greedy chat/tool/image checks and multi-request soak testing
 on actual A100 are still mandatory. A successful GitHub source CI is
 insufficient. Do not claim DSpark5 safe just because the small kernel test
 passes; upstream #62417 demonstrates the gap.
+
+
+## No-model-load preflight (host + immutable SIF content)
+
+A passing source replay CI does **not** prove that the SIF on the A100
+host contains those exact files. Before any CUDA kernel test, run:
+
+```bash
+git switch vllm-v0320-sm80 && git pull --ff-only
+python3 latest/preflight_sif.py --source-only
+bash latest/build_sif.sh
+
+SIF="$PWD/deepseek-v41-flash-sm80-v0320-stage5-qa2-cu130.sif"
+python3 latest/preflight_sif.py --sif "$SIF" \
+  --model-dir /models/DeepSeek-V4.1-Flash-1017
+```
+
+The second command **does not load model weights or run CUDA kernels**.
+It checks the host's Apptainer/SingularityCE runtime (avoids unrelated
+`/usr/games/singularity`), the SIF's pinned labels, compares SHA256 of
+every `%files` input against its actual **inside-SIF** copy (detects stale
+renamed images), checks vLLM/PyTorch CUDA13 package version, replays the
+source audit, verifies the local checkpoint index's listed shards and
+estimates Engram RAM. It cannot verify shard contents cryptographically
+unless trusted checksums are supplied separately.
+
+Still mandatory afterwards: **real A100 CUDA kernel oracle probes, actual
+1017 weight loading, generation/chat/tool/Vision comparison and memory
+stress tests**. Do not infer correctness from preflight success.
+
