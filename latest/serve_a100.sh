@@ -18,6 +18,7 @@ HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-18005}"
 ENABLE_VISION="${ENABLE_VISION:-1}"
 ENABLE_DSPARK="${ENABLE_DSPARK:-0}"
+ALLOW_KNOWN_1017_DSPARK_CORRUPTION="${ALLOW_KNOWN_1017_DSPARK_CORRUPTION:-0}"
 DRY_RUN="${DRY_RUN:-0}"
 ALLOW_EXPERIMENTAL="${ALLOW_EXPERIMENTAL:-0}"
 SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-deepseek-v41-flash-1017}"
@@ -93,6 +94,16 @@ if [[ "${DRY_RUN}" == 1 ]]; then
   printf '%q ' "${ARGS[@]}"
   printf '\n'
   exit 0
+fi
+# Upstream #62417 reports 1017 DSpark looping/corrupt reasoning and tool calls
+# on SM120, both v0.32.0 and nightly. SM80 is not proven safe; prevent an
+# implicit enable even after the isolated kernel arithmetic tests pass.
+if [[ "${ENABLE_DSPARK}" == 1 && "${ALLOW_KNOWN_1017_DSPARK_CORRUPTION}" != 1 ]]; then
+  echo "ERROR: DSpark5 on DeepSeek-V4.1-Flash-1017 has known chat/tool corruption." >&2
+  echo "Upstream: https://github.com/vllm-project/vllm/issues/62417" >&2
+  echo "Disable with ENABLE_DSPARK=0 (recommended)." >&2
+  echo "For diagnostic reproduction ONLY, set ALLOW_KNOWN_1017_DSPARK_CORRUPTION=1." >&2
+  exit 2
 fi
 if [[ "${ALLOW_EXPERIMENTAL}" != 1 ]]; then
   echo "ERROR: upstream v0.32.0 SM80 inference is NOT yet GPU-validated." >&2
