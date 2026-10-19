@@ -6,7 +6,7 @@ From: vllm/vllm-openai:v0.32.0
   Model deepseek-ai/DeepSeek-V4.1-Flash-1017
   VLLMVersion 0.32.0
   CUDAFamily 13
-  SM80Status STAGE4_SOURCE_ONLY_GPU_NUMERICS_NOT_VALIDATED
+  SM80Status STAGE5_SOURCE_ONLY_GPU_NUMERICS_NOT_VALIDATED
   UpstreamCommit 5df63a7203cdb9328d824a27b682e77c7b9928be
 
 %files
@@ -14,6 +14,7 @@ From: vllm/vllm-openai:v0.32.0
   latest/port_sm80_numeric.py /opt/deepseek-sm80/latest/port_sm80_numeric.py
   latest/port_sm80_indexer.py /opt/deepseek-sm80/latest/port_sm80_indexer.py
   latest/port_sm80_engram.py /opt/deepseek-sm80/latest/port_sm80_engram.py
+  latest/port_sm80_dspark.py /opt/deepseek-sm80/latest/port_sm80_dspark.py
   latest/ampere_sparse.py /opt/deepseek-sm80/latest/ampere_sparse.py
   latest/audit_source.py /opt/deepseek-sm80/audit_source.py
   latest/test_inverse_rope_contract.py /opt/deepseek-sm80/test_inverse_rope_contract.py
@@ -21,6 +22,7 @@ From: vllm/vllm-openai:v0.32.0
   latest/verify_sm80_numeric.py /opt/deepseek-sm80/verify_sm80_numeric.py
   latest/verify_sm80_indexer.py /opt/deepseek-sm80/verify_sm80_indexer.py
   latest/verify_sm80_engram.py /opt/deepseek-sm80/verify_sm80_engram.py
+  latest/verify_sm80_dspark.py /opt/deepseek-sm80/verify_sm80_dspark.py
   patches/vendor/vllm/v1/attention/ops/fp8_sm80.py /opt/deepseek-sm80/patches/vendor/vllm/v1/attention/ops/fp8_sm80.py
   patches/vendor/vllm/v1/attention/ops/mqa_logits_triton.py /opt/deepseek-sm80/patches/vendor/vllm/v1/attention/ops/mqa_logits_triton.py
 
@@ -45,9 +47,10 @@ PY
   python3 /opt/deepseek-sm80/latest/port_sm80_numeric.py
   python3 /opt/deepseek-sm80/latest/port_sm80_indexer.py
   python3 /opt/deepseek-sm80/latest/port_sm80_engram.py
-  python3 /opt/deepseek-sm80/audit_source.py --mode engram
+  python3 /opt/deepseek-sm80/latest/port_sm80_dspark.py
+  python3 /opt/deepseek-sm80/audit_source.py --mode dspark
   python3 /opt/deepseek-sm80/test_inverse_rope_contract.py --source-root "$(python3 -c 'import vllm; print(vllm.__path__[0])')"
-  echo "STAGE4_SOURCE_BUILT: GPU numeric and end-to-end inference remain unvalidated"
+  echo "STAGE5_SOURCE_BUILT: GPU numeric and end-to-end inference remain unvalidated"
 
 %runscript
   exec "$@"
