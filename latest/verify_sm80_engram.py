@@ -3,8 +3,8 @@
 
 The model wrapper MUST pass a byte-typed pointer to Triton on SM80.
 Check no-copy FP8->uint8 view; compare live model lookup and raw kernel
-against independent CPU FP8/E8M0/BF16 reference. This checks the on-device
-table but not the full host-pinned UVA CPU-offload path.
+against independent CPU FP8/E8M0/BF16 reference. Also validate pinned CPU
+UVA table access using vLLM's real accelerator-view helper.
 """
 import importlib.metadata
 from types import SimpleNamespace
@@ -92,6 +92,30 @@ def main():
                 delta=(bf16[t,h].float()-expected.float()).abs().max().item()
                 raise AssertionError(f"Engram BF16 mismatch at ({t},{h}) max_abs={delta}")
     print("ENGRAM_SM80_LOOKUP_BYTES_AND_BF16_BITWISE_PASS")
+
+    # The production recipe offloads Engram weights to pinned CPU memory.
+    # Test the same UVA device view (without copying its table to HBM).
+    # This is intentionally a hard failure: if this op is unavailable in
+    # the container, the real --engram-config cpu_offload path also fails.
+    from vllm.utils.torch_utils import get_accelerator_view_from_cpu_tensor
+    pinned_table=cpu_fp8.pin_memory()
+    pinned_scales=sf.cpu().pin_memory()
+    if not pinned_table.is_pinned() or not pinned_scales.is_pinned():
+        raise RuntimeError("Engram CPU offload requires pinned host memory")
+    uva_table=get_accelerator_view_from_cpu_tensor(pinned_table)
+    uva_scales=get_accelerator_view_from_cpu_tensor(pinned_scales)
+    if uva_table.dtype!=torch.float8_e4m3fn or uva_scales.dtype!=torch.uint8:
+        raise AssertionError("Engram UVA view changed FP8 or E8M0 dtype")
+    fake.cpu_offload=True
+    fake._storage=lambda: (uva_table,uva_scales)
+    uva_bf16=torch.empty_like(bf16)
+    uva_packed=torch.empty_like(packed)
+    ParallelEngramEmbedding.lookup(fake, ids, uva_bf16)
+    ParallelEngramEmbedding.lookup(fake, ids, uva_packed)
+    torch.cuda.synchronize()
+    if not torch.equal(uva_bf16,bf16) or not torch.equal(uva_packed,packed):
+        raise AssertionError("CPU pinned UVA Engram values differ from GPU-table reference")
+    print("ENGRAM_SM80_PINNED_HOST_UVA_BITWISE_PASS")
 
 
 if __name__=="__main__":
