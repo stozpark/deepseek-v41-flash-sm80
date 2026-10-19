@@ -43,7 +43,7 @@ jobs:
       - name: Python and Bash syntax
         run: |
           set -euo pipefail
-          python3 -m py_compile latest/audit_source.py latest/test_mqa_env_compat.py latest/port_sm80_stage1.py latest/port_sm80_numeric.py latest/port_sm80_indexer.py latest/port_sm80_engram.py latest/port_sm80_dspark.py latest/test_inverse_rope_contract.py latest/test_engram_sm80_abi.py latest/test_sm80_woa_contract.py latest/test_sm80_fp8_pointer_abi.py latest/ampere_sparse.py latest/verify_sm80_kernels.py latest/verify_sm80_numeric.py latest/verify_sm80_indexer.py latest/verify_sm80_engram.py latest/verify_sm80_dspark.py latest/smoke_vision_dspark.py latest/verify_1017_serving_semantics.py
+          python3 -m py_compile latest/audit_source.py latest/test_mqa_env_compat.py latest/port_sm80_stage1.py latest/port_sm80_numeric.py latest/port_sm80_indexer.py latest/port_sm80_engram.py latest/port_sm80_dspark.py latest/test_inverse_rope_contract.py latest/test_engram_sm80_abi.py latest/test_sm80_woa_contract.py latest/test_sm80_fp8_pointer_abi.py latest/ampere_sparse.py latest/verify_sm80_kernels.py latest/verify_sm80_numeric.py latest/verify_sm80_indexer.py latest/verify_sm80_engram.py latest/verify_sm80_dspark.py latest/smoke_vision_dspark.py latest/verify_1017_serving_semantics.py latest/preflight_sif.py
           python3 -m py_compile patches/vendor/vllm/v1/attention/ops/fp8_sm80.py
           python3 -m py_compile patches/vendor/vllm/v1/attention/ops/mqa_logits_triton.py
           for f in latest/*.sh; do bash -n "$f"; done
@@ -59,6 +59,15 @@ jobs:
           DRY_RUN=1 bash ./latest/serve_two_tp8.sh > /tmp/two-tp8.txt
           grep -q 'GPUs=0,1,2,3,4,5,6,7' /tmp/two-tp8.txt
           grep -q 'GPUs=8,9,10,11,12,13,14,15' /tmp/two-tp8.txt
+      - name: Verify pre-model static image manifest and DSpark safety guard
+        run: |
+          set -euo pipefail
+          python3 latest/preflight_sif.py --source-only
+          if ALLOW_EXPERIMENTAL=1 ENABLE_DSPARK=1 bash latest/serve_a100.sh >/tmp/dspark-denied-out.txt 2>/tmp/dspark-denied-err.txt; then
+            echo 'DSpark1017 unexpectedly allowed without known-corruption diagnostic flag' >&2
+            exit 1
+          fi
+          grep -q 'known chat/tool corruption' /tmp/dspark-denied-err.txt
       - name: Audit pristine upstream and plan pinned patch
         run: |
           set -euo pipefail
