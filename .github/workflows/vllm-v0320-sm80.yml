@@ -43,7 +43,7 @@ jobs:
       - name: Python and Bash syntax
         run: |
           set -euo pipefail
-          python3 -m py_compile latest/audit_source.py latest/port_sm80_stage1.py latest/port_sm80_numeric.py latest/port_sm80_indexer.py latest/port_sm80_engram.py latest/port_sm80_dspark.py latest/test_inverse_rope_contract.py latest/ampere_sparse.py latest/verify_sm80_kernels.py latest/verify_sm80_numeric.py latest/verify_sm80_indexer.py latest/verify_sm80_engram.py latest/verify_sm80_dspark.py latest/smoke_vision_dspark.py
+          python3 -m py_compile latest/audit_source.py latest/test_mqa_env_compat.py latest/port_sm80_stage1.py latest/port_sm80_numeric.py latest/port_sm80_indexer.py latest/port_sm80_engram.py latest/port_sm80_dspark.py latest/test_inverse_rope_contract.py latest/ampere_sparse.py latest/verify_sm80_kernels.py latest/verify_sm80_numeric.py latest/verify_sm80_indexer.py latest/verify_sm80_engram.py latest/verify_sm80_dspark.py latest/smoke_vision_dspark.py
           python3 -m py_compile patches/vendor/vllm/v1/attention/ops/fp8_sm80.py
           python3 -m py_compile patches/vendor/vllm/v1/attention/ops/mqa_logits_triton.py
           for f in latest/*.sh; do bash -n "$f"; done
@@ -71,6 +71,7 @@ jobs:
           python3 latest/port_sm80_stage1.py --skip-version-check \
             --vllm-root upstream/vllm
           python3 latest/audit_source.py --source-root upstream/vllm --mode port
+          python3 latest/test_mqa_env_compat.py --source-root upstream/vllm
           python3 -m py_compile \
             upstream/vllm/models/deepseek_v41/nvidia/model.py \
             upstream/vllm/models/deepseek_v41/ampere/ampere_sparse.py \
