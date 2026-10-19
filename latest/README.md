@@ -29,6 +29,7 @@
 | 2 | `port_sm80_numeric.py` | Software E4M3FN encode/decode replacing SM80-incompatible native Triton casts in paged KV, compressor, indexer K, and sparse attention; preserves UE8M0 and FP4-rounded scale semantics | CI bytecode and exact-source checks, `verify_sm80_numeric.py` prepared for GPU |
 | 3 | `port_sm80_indexer.py` | Remove DeepGEMM requirement on SM80, quantize Q to correct FP8 bytes, use BF16 Tensor Core Triton `fp8_mqa_logits_triton`/`fp8_paged_mqa_logits_triton`; preserve upstream two-level candidate masking | CI patch replay + `verify_sm80_indexer.py` prepared for GPU |
 | 4 | `port_sm80_engram.py` | Avoid unsupported direct E4M3 tensor loads and FP32 casts in host-offloaded Engram tables on SM80; re-interpret bytes and preserve E8M0 scale semantics | CI patch replay + `verify_sm80_engram.py` tests both raw packed bytes and BF16 output |
+| 5 | `port_sm80_dspark.py` | DSpark5 target verification: six speculative rows with distinct causal ends in SM80 paged MQA | CI replay, `verify_sm80_dspark.py` available for GPU |
 
 **Accuracy policy:** source CI passing is **not** a successful numerical
 benchmark. The real A100 script checks E4M3FN bitwise parity vs PyTorch,
@@ -64,7 +65,7 @@ BASE_SIF=/path/to/upstream-vllm0320-cu130.sif bash latest/build_sif.sh
 ```
 
 The resulting default file is
-`deepseek-v41-flash-sm80-v0320-stage4-unverified-cu130.sif`. The build
+`deepseek-v41-flash-sm80-v0320-stage5-unverified-cu130.sif`. The build
 checks source patch integrity and inverse-RoPE completion, not CUDA runtime.
 
 ## **Actual A100 validation** (mandatory)
@@ -77,32 +78,33 @@ MODEL_PATH=/models/DeepSeek-V4.1-Flash-1017 \
 bash latest/serve_a100.sh
 ```
 
-The launcher intentionally chooses 32K maximum context, 2048 batched
+The launcher enables Vision by default (`ENABLE_VISION=1`) and offers opt-in DSpark5 (`ENABLE_DSPARK=1`). See [VISION_DSPARK_BRINGUP.md](VISION_DSPARK_BRINGUP.md) for tests and limitations. The launcher intentionally chooses 32K maximum context, 2048 batched
 tokens, concurrency 4, eager attention, 128-token indexer pages, explicit
-FP8 indexer, `sparse_indexer_topk_backend=torch`, no speculative decode,
+FP8 indexer, `sparse_indexer_topk_backend=torch`, optional DSpark5 (requires separate A100 multi-token test),
 no DCP/PCP, no prefix caching or bounded SWA replay, no CuMem allocator.
-`ENABLE_VISION=0` by default; vision is a subsequent evaluation step.
+Vision input still needs a real A100 semantic evaluation; setting its flag only enables the upstream model path.
 The configured OpenAI API port is 18005.
 
 Standalone GPU diagnostics (after SIF build):
 
 ```bash
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage4-unverified-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-unverified-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_kernels.py
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage4-unverified-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-unverified-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_numeric.py
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage4-unverified-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-unverified-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_indexer.py
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage4-unverified-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-unverified-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_engram.py
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-unverified-cu130.sif \
+  python3 /opt/deepseek-sm80/verify_sm80_dspark.py
 ```
 
 **Stop rules:** no inference claim if source or GPU numerical probes fail.
 Before ready-to-merge require 1017 real weights TP8 load and deterministic
 text + vision + tool + reasoning comparison with a supported reference,
 multi-request tests with fragmented KV pages, indexer candidate routing
-and context-length expansion (2K → 8K → 32K → 128K). CUDA graphs, prefix
-cache, DSpark, pipeline/context parallelism and 1M contexts are unsupported
+and context-length expansion (2K → 8K → 32K → 128K). CUDA graphs, prefix cache, pipeline/context parallelism and 1M contexts are unsupported
 until separately verified. No model-quality results can be inferred
 from bytecode tests alone.
 
