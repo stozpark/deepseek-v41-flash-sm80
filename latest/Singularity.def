@@ -21,6 +21,7 @@ From: vllm/vllm-openai:v0.32.0
   latest/test_inverse_rope_contract.py /opt/deepseek-sm80/test_inverse_rope_contract.py
   latest/test_engram_sm80_abi.py /opt/deepseek-sm80/test_engram_sm80_abi.py
   latest/test_sm80_woa_contract.py /opt/deepseek-sm80/test_sm80_woa_contract.py
+  latest/test_sm80_fp8_pointer_abi.py /opt/deepseek-sm80/test_sm80_fp8_pointer_abi.py
   latest/verify_sm80_kernels.py /opt/deepseek-sm80/verify_sm80_kernels.py
   latest/verify_sm80_numeric.py /opt/deepseek-sm80/verify_sm80_numeric.py
   latest/verify_sm80_indexer.py /opt/deepseek-sm80/verify_sm80_indexer.py
@@ -54,6 +55,7 @@ PY
   python3 /opt/deepseek-sm80/audit_source.py --mode dspark
   python3 /opt/deepseek-sm80/test_engram_sm80_abi.py --source-root "$(python3 -c 'import vllm; print(vllm.__path__[0])')"
   python3 /opt/deepseek-sm80/test_sm80_woa_contract.py --source-root "$(python3 -c 'import vllm; print(vllm.__path__[0])')"
+  python3 /opt/deepseek-sm80/test_sm80_fp8_pointer_abi.py --source-root "$(python3 -c 'import vllm; print(vllm.__path__[0])')"
   python3 /opt/deepseek-sm80/test_mqa_env_compat.py --source-root "$(python3 -c 'import vllm; print(vllm.__path__[0])')"
   python3 /opt/deepseek-sm80/test_inverse_rope_contract.py --source-root "$(python3 -c 'import vllm; print(vllm.__path__[0])')"
   echo "STAGE5_SOURCE_BUILT: GPU numeric and end-to-end inference remain unvalidated"
