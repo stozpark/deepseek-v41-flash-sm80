@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Stage4: SM80 Engram host-table FP8 exact byte interpretation.
 
-The original DeepSeek V4.1 Triton lookup directly loads FP8 weights and
-converts them to FP32. On A100 this is a native SM89+ E4M3 conversion, so
-reinterpret as u8 and use bit-exact software decoder on SM80. The ordinary
-(non-SM80) implementation is left unchanged.
+Triton cannot compile an fp8e4nv POINTER ARGUMENT on SM80, even when the
+software-decoding branch is a constexpr selected after argument typing.
+Convert the Python caller's E4M3FN tensor to a zero-copy uint8 view BEFORE
+launch, including CPU pinned/UVA tables. Software decode the original bytes
+inside the kernel without altering UE8M0 scales or other GPU architectures.
 """
 from __future__ import annotations
 
@@ -94,16 +95,45 @@ def patch(root:Path):
                 (value_f32 * scale).to(tl.bfloat16),
                 mask=valid[:, None],
             )""")
-    s=change(s,
+    # The FP8 tensor pointer is encoded in Triton's JIT signature *before*
+    # SOFTWARE_FP8 constexpr removes the unsupported branch. Casting inside
+    # @triton.jit is therefore too late on SM80. Send uint8 dtype with the
+    # same data_ptr from the Python caller, for both GPU and CPU-UVA weights.
+    helper = """def _engram_sm80_weight_bytes(weight: torch.Tensor) -> torch.Tensor:
+    # FP8 values, byte order, offsets, and row layout must be unchanged.
+    if weight.dtype != torch.float8_e4m3fn:
+        raise TypeError(f"Engram SM80 expects E4M3FN, got {weight.dtype}")
+    if weight.ndim != 2 or not weight.is_contiguous():
+        raise ValueError("SM80 Engram requires contiguous [vocab, dim] FP8 table")
+    byte_view = weight.view(torch.uint8)
+    if byte_view.data_ptr() != weight.data_ptr() or byte_view.shape != weight.shape:
+        raise RuntimeError("SM80 Engram byte view must be zero-copy and shape-identical")
+    return byte_view
+
+
+"""
+    s = change(s, "def engram_head_shard_rank() -> int:\n",
+               helper + "def engram_head_shard_rank() -> int:\n")
+    # The actual model's lookup() path (not just the standalone test) must
+    # also produce a uint8 argument to prevent unsupported ptr<fp8e4nv>.
+    s = change(s,
+        """        weight, scales = self._storage()
+        ids_stride_t, ids_stride_h = indices.stride()""",
+        """        weight, scales = self._storage()
+        software_fp8 = (
+            current_platform.is_cuda()
+            and current_platform.is_device_capability_family(80)
+        )
+        if software_fp8:
+            weight = _engram_sm80_weight_bytes(weight)
+        ids_stride_t, ids_stride_h = indices.stride()""")
+    s = change(s,
         """            PACKED=out.dtype == torch.uint8,
             OUT_STRIDE=out.stride(0),
         )""",
         """            PACKED=out.dtype == torch.uint8,
             OUT_STRIDE=out.stride(0),
-            SOFTWARE_FP8=(
-                current_platform.is_cuda()
-                and current_platform.is_device_capability_family(80)
-            ),
+            SOFTWARE_FP8=software_fp8,
         )""")
     compile(s,str(dest),"exec")
     return dest,s
