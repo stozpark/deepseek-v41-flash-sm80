@@ -158,8 +158,18 @@ SIF_PATH="$PWD/deepseek-v41-flash-sm80-v0320-stage5-envfix-cu130.sif" \
  bash latest/serve_a100.sh
 ```
 
-Earlier `Failed to import from amdsmi` and `vllm._rocm_C` messages
-may be optional backend discovery; they are not the exception shown in the
-traceback. A missing `vllm._C` can be a separate extension compatibility
-issue if a required custom op is later unavailable; do not infer from this
-warning alone that serving succeeded or failed.
+The A100 SM80 adapter imports `vllm.models.deepseek_v41.amd.rocm` for
+the portable attention implementation. This eagerly imports
+`vllm.platforms.rocm`, whose top-level optional AMD probes print
+`No module named amdsmi`, `No module named vllm._C`, and
+`No module named vllm._rocm_C`. On an NVIDIA-only CUDA 13 image these
+three warnings are expected from this inherited ROCm path; installing AMD
+tools or an old vLLM `_C` module is **not** the correct response.
+
+**Different extension:** vLLM v0.32.0's actual CUDA platform requires
+`vllm._C_stable_libtorch`. The A100 probe explicitly asserts both
+`current_platform.is_cuda()` and import of `_C_stable_libtorch`, emitting
+`VLLM_CUDA_EXTENSION_PASS`. If that assertion fails, treat it as a genuine
+CUDA image/version problem. If it passes and only the three ROCm warnings
+remain, look for the first later `Traceback` / failed numerical assertion
+rather than installing `amdsmi` or hiding warnings.
