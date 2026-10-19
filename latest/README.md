@@ -198,10 +198,14 @@ UVA table; no table copy or numerical re-quantization is performed.
 well as direct byte-typed Triton invocation, against independent FP8 byte,
 E8M0-scale and BF16 reference values. `test_engram_sm80_abi.py` checks
 the caller-side ABI invariant in the pinned upstream source replay and
-during `Singularity.def` build. Physical A100 GPU and CPU-pinned UVA
-correctness are distinct; the small GPU-table probe is still required.
+during `Singularity.def` build. Physical A100 GPU-table and CPU-pinned UVA correctness are checked
+separately in the enhanced live diagnostic. Neither has been run here.
 
 The previous `stage5-envfix` SIF is **stale** and must not be renamed.
+The GPU diagnostic now also checks **pinned CPU table/UVA access** using the
+same `get_accelerator_view_from_cpu_tensor` routine used by the actual
+CPU-offloaded Engram model. It compares packed bytes and BF16 values
+against the on-device table, failing before full model load if they differ.
 Rebuild after pulling the new branch version:
 
 ```bash
