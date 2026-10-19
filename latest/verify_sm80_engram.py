@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Physical A100 Engram FP8 lookup oracle, no model weights.
 
-Compare E4M3FN bytes, UE8M0 scales and BF16 output with an independent
-PyTorch reference. Does not validate pinned-host UVA memory or full model.
+The model wrapper MUST pass a byte-typed pointer to Triton on SM80.
+Check no-copy FP8->uint8 view; compare live model lookup and raw kernel
+against independent CPU FP8/E8M0/BF16 reference. This checks the on-device
+table but not the full host-pinned UVA CPU-offload path.
 """
 import importlib.metadata
+from types import SimpleNamespace
+
 import torch
 
 
@@ -14,29 +18,63 @@ def main():
     if not torch.cuda.is_available() or torch.cuda.get_device_capability(0)!=(8,0):
         raise RuntimeError("Physical A100/A800 SM80 required")
 
-    from vllm.models.deepseek_v41.common.engram import _engram_lookup_kernel
+    from vllm.models.deepseek_v41.common.engram import (
+        ParallelEngramEmbedding,
+        _engram_lookup_kernel,
+        _engram_sm80_weight_bytes,
+    )
     torch.manual_seed(62197)
     dev=torch.device("cuda",0)
     T,H,N,D,BS=4,2,32,256,32
     # Produce FP8 on CPU, then transfer raw bytecodes; no CUDA FP8 MMA needed.
-    cpu_codes=(torch.randn(N,D,dtype=torch.float32)*0.3).to(
-        torch.float8_e4m3fn).view(torch.uint8)
-    table=cpu_codes.to(dev).view(torch.float8_e4m3fn).contiguous()
+    cpu_fp8=(torch.randn(N,D,dtype=torch.float32)*0.3).to(
+        torch.float8_e4m3fn).contiguous()
+    cpu_codes=cpu_fp8.view(torch.uint8)
+    table_fp8=cpu_codes.to(dev).view(torch.float8_e4m3fn)
+    # This exact dtype transition is essential: passing ptr<fp8e4nv> as
+    # Triton kernel arg fails during JIT argument typing on SM80.
+    table=_engram_sm80_weight_bytes(table_fp8)
+    if (table.dtype != torch.uint8 or table.shape != table_fp8.shape
+            or table.data_ptr() != table_fp8.data_ptr()
+            or not torch.equal(table, cpu_codes.to(dev))):
+        raise AssertionError("E4M3FN->uint8 GPU view is not bit/ptr identical")
+    print("ENGRAM_SM80_UINT8_KERNEL_ARGUMENT_PASS")
     sf=torch.randint(124,131,(N,D//BS),dtype=torch.uint8).to(dev)
     ids=torch.tensor([[3,19],[0,6],[31,-1],[35,9]],dtype=torch.int64,device=dev)
     bf16=torch.empty((T,H,D),dtype=torch.bfloat16,device=dev)
     packed=torch.empty((T,H,D+D//BS),dtype=torch.uint8,device=dev)
-    for result,is_packed in ((bf16,False),(packed,True)):
-        _engram_lookup_kernel[(1,)](
-            table,sf,ids,ids,result,
-            0,N,T*H,ids.stride(0),ids.stride(1),
-            HEAD_START=0,LOCAL_HEADS=H,TOTAL_HEADS=H,
-            DIM=D,QUANT_BLOCK=BS,BLOCK_R=16,GRID=1,
-            SORTED=False,PACKED=is_packed,OUT_STRIDE=result.stride(0),
-            SOFTWARE_FP8=True,
-        )
+    # Exercise the actual v0.32.0 model lookup method, not just a manually
+    # corrected test call. A real EngramEmbedding constructs the same
+    # arguments from _storage() and must never feed the FP8 pointer to JIT.
+    fake=SimpleNamespace(
+        part_n_hash_cols=H,
+        cpu_offload=False,
+        _packed=None,
+        head_start=0,
+        n_hash_cols=H,
+        vocab_start_idx=0,
+        vocab_end_idx=N,
+        dim=D,
+        block_size=BS,
+        _num_sms=torch.cuda.get_device_properties(dev).multi_processor_count,
+        _storage=lambda: (table_fp8, sf),
+    )
+    for result in (bf16, packed):
+        ParallelEngramEmbedding.lookup(fake, ids, result)
+    # Also exercise the raw JIT ABI explicitly with a uint8 argument.
+    direct=torch.empty_like(bf16)
+    _engram_lookup_kernel[(1,)](
+        table, sf, ids, ids, direct,
+        0, N, T*H, ids.stride(0), ids.stride(1),
+        HEAD_START=0, LOCAL_HEADS=H, TOTAL_HEADS=H,
+        DIM=D, QUANT_BLOCK=BS, BLOCK_R=16, GRID=1,
+        SORTED=False, PACKED=False, OUT_STRIDE=direct.stride(0),
+        SOFTWARE_FP8=True,
+    )
     torch.cuda.synchronize()
-    decoded=table.float()
+    if not torch.equal(direct,bf16):
+        raise AssertionError("model lookup wrapper and raw uint8 ABI disagree")
+    decoded=cpu_fp8.float().to(dev)
     for t in range(T):
         for h in range(H):
             idx=int(ids[t,h])
