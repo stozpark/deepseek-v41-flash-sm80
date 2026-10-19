@@ -34,6 +34,21 @@ def main() -> None:
     print("torch=", torch.__version__, "CUDA=", cuda,
           "device=", torch.cuda.get_device_name(args.gpu))
 
+    # vLLM 0.32.0 CUDA kernels register via _C_stable_libtorch, while the
+    # ROCm reference module (imported by our Ampere adapter) still attempts
+    # optional legacy vllm._C, vllm._rocm_C and AMD's amdsmi. Their warning
+    # messages are not evidence that the CUDA extension is missing.
+    from vllm.platforms import current_platform
+    require(current_platform.is_cuda(), "vLLM platform is not CUDA")
+    try:
+        import vllm._C_stable_libtorch  # noqa: F401
+    except (ImportError, OSError) as exc:
+        raise RuntimeError(
+            "Required vLLM v0.32.0 CUDA extension "
+            "vllm._C_stable_libtorch failed to load"
+        ) from exc
+    print("VLLM_CUDA_EXTENSION_PASS (_C_stable_libtorch)")
+
     # Registration cannot be inferred from Python syntax; force the imports.
     from vllm.v1.attention.backends.registry import AttentionBackendEnum
     require(
