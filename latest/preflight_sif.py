@@ -46,7 +46,7 @@ def read_env(path: Path) -> dict[str,str]:
     for raw in path.read_text().splitlines():
         line=raw.strip()
         if line and not line.startswith("#"):
-            match=re.fullmatch(r"([A-Z_]+)=([a-zA-Z0-9._/\-]+)",line)
+            match=re.fullmatch(r"([A-Z_]+)=([a-zA-Z0-9._/:\-]+)",line)
             if not match:
                 fatal(f"invalid pinned VERSION.env entry: {line!r}")
             values[match[1]]=match[2]
