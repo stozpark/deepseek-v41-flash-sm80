@@ -65,7 +65,7 @@ BASE_SIF=/path/to/upstream-vllm0320-cu130.sif bash latest/build_sif.sh
 ```
 
 The resulting default file is
-`deepseek-v41-flash-sm80-v0320-stage5-unverified-cu130.sif`. The build
+`deepseek-v41-flash-sm80-v0320-stage5-envfix-cu130.sif`. The build
 checks source patch integrity and inverse-RoPE completion, not CUDA runtime.
 
 ## **Actual A100 validation** (mandatory)
@@ -88,15 +88,15 @@ The configured OpenAI API port is 18005.
 Standalone GPU diagnostics (after SIF build):
 
 ```bash
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-unverified-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-envfix-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_kernels.py
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-unverified-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-envfix-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_numeric.py
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-unverified-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-envfix-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_indexer.py
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-unverified-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-envfix-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_engram.py
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-unverified-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-envfix-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_dspark.py
 ```
 
@@ -122,3 +122,44 @@ Engram correctness), and
 [#62259](https://github.com/vllm-project/vllm/pull/62259) /
 [#62290](https://github.com/vllm-project/vllm/pull/62290) (truncated DSML
 tool-call output).
+
+## Runtime compatibility fix: missing `VLLM_INDEXER_LOGITS_MAXNREG`
+
+An A100-SXM4-80GB / CUDA 13.0 / PyTorch 2.13.0 diagnostic reached
+`SM80_SOFTWARE_FP8_LUT_PASS` then failed importing
+`vllm.v1.attention.ops.mqa_logits_triton` with
+`AttributeError: vllm.envs has no VLLM_INDEXER_LOGITS_MAXNREG`.
+
+The vendored SM80 MQA helper was inherited from an earlier fork. The exact
+vLLM 0.32.0 base does **not** register three indexer tuning names; the
+updated vendored helper reads them from `os.environ` directly, preserving
+historical defaults: `MAXNREG=0` (unconstrained),
+`KV_GROUP_MIN_M=0` (auto), and `FACTOR_K_SCALE=1` (enabled).
+An independent CPU test `test_mqa_env_compat.py` now guards all three
+defaults/overrides against the pinned upstream `vllm/envs.py` during source
+CI and SIF build. This fixes the import API mismatch, **not** proof of
+correct A100 numerical execution.
+
+The default SIF name was changed to `stage5-envfix` to prevent accidentally
+rerunning the old, already-built `stage5-unverified` image.
+
+```bash
+git switch vllm-v0320-sm80 && git pull --ff-only
+bash latest/build_sif.sh
+SIF=./deepseek-v41-flash-sm80-v0320-stage5-envfix-cu130.sif
+
+# Check import in the NEW image, with GPU:
+apptainer exec --nv "$SIF" python3 -c \
+ 'from vllm.v1.attention.ops.mqa_logits_triton import fp8_paged_mqa_logits_triton; print("SM80_MQA_IMPORT_PASS")'
+
+# Resume safe hardware test sequence (still experimental):
+SIF_PATH="$PWD/deepseek-v41-flash-sm80-v0320-stage5-envfix-cu130.sif" \
+ ALLOW_EXPERIMENTAL=1 MODEL_PATH=/models/DeepSeek-V4.1-Flash-1017 \
+ bash latest/serve_a100.sh
+```
+
+Earlier `Failed to import from amdsmi` and `vllm._rocm_C` messages
+may be optional backend discovery; they are not the exception shown in the
+traceback. A missing `vllm._C` can be a separate extension compatibility
+issue if a required custom op is later unavailable; do not infer from this
+warning alone that serving succeeded or failed.
