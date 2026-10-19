@@ -103,11 +103,18 @@ def check_source(root: Path, mode: str) -> list[str]:
         checks.append("stage3_deepgemm_free_sm80_indexer")
     if mode in ("engram", "dspark"):
         source=(root / "models/deepseek_v41/common/engram.py").read_text()
-        for required in ("SOFTWARE_FP8", "_decode_fp8_f32(values, False)",
-                         "weight.to(tl.pointer_type(tl.uint8))"):
+        for required in (
+            "SOFTWARE_FP8",
+            "_decode_fp8_f32(values, False)",
+            "weight.to(tl.pointer_type(tl.uint8))",
+            "def _engram_sm80_weight_bytes(",
+            "weight.view(torch.uint8)",
+            "weight = _engram_sm80_weight_bytes(weight)",
+            "SOFTWARE_FP8=software_fp8",
+        ):
             if required not in source:
                 fail(f"Engram SM80 lookup source missing {required}")
-        checks.append("stage4_engram_byte_dequant_and_lookup")
+        checks.append("stage4_engram_u8_argument_and_byte_dequant")
     if mode in ("port", "numeric", "indexer", "engram", "dspark"):
         mqa = (root / "v1/attention/ops/mqa_logits_triton.py").read_text()
         if "envs.VLLM_INDEXER_LOGITS_" in mqa:
