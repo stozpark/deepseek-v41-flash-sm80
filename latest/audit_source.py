@@ -96,7 +96,7 @@ def check_source(root: Path, mode: str) -> list[str]:
             "fp8_paged_mqa_logits_triton(",
             "fp8_mqa_logits_triton(",
             "SOFTWARE_FP8=_sm80_indexer_fallback()",
-            "SM80 plain one-token decode only",
+            "SM80 DSpark5 supports at most six target rows" if mode == "dspark" else "SM80 plain one-token decode only",
         ):
             if needed not in source:
                 fail(f"SM80 indexer is missing {needed}")
