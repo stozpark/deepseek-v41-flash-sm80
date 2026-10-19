@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Experimental vLLM 0.32.0 A100 build; produces stage-4 source integration only.
+# Experimental vLLM 0.32.0 A100 build; produces stage-5 source integration only.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
@@ -48,7 +48,7 @@ fi
 
 BUILD_ARGS="${BUILD_ARGS:---fakeroot}"
 read -r -a EXTRA_ARGS <<< "${BUILD_ARGS}"
-echo "[EXPERIMENTAL] Source-port stage4 SIF, NOT a GPU-tested serving image"
+echo "[EXPERIMENTAL] Source-port stage5 SIF, NOT a GPU-tested serving image"
 echo "vLLM=${VLLM_VERSION} image=${VLLM_IMAGE} cuda>=${CUDA_MIN_MAJOR}"
 (
   cd "${ROOT}"
