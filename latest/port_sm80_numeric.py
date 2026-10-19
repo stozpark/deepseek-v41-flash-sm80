@@ -163,6 +163,24 @@ def numeric_patch(root: Path) -> dict[Path, bytes]:
             _encode_e4m3fn_u8(tl.clamp(scaled, -448.0, 448.0)),
         )""",
         1, rel)
+    # A plain FP8 cache has an E4M3-typed Python tensor. Triton's SM80
+    # argument binder rejects ptr<fp8e4nv> BEFORE running the inside-kernel
+    # byte store. Pass the same backing bytes as uint8 at the launch boundary.
+    src = swap(
+        src,
+        """        kv_cache,
+        slot_mapping,
+        fp8_scale if store_fp8 else None,""",
+        """        (
+            kv_cache.view(torch.uint8)
+            if store_fp8 and current_platform.is_cuda()
+            and current_platform.is_device_capability_family(80)
+            else kv_cache
+        ),
+        slot_mapping,
+        fp8_scale if store_fp8 else None,""",
+        1, rel,
+    )
     assert BELOW_SM89_DIRECT_CAST not in src, rel
     updates[root / rel] = src.encode()
 
@@ -193,6 +211,36 @@ def numeric_patch(root: Path) -> dict[Path, bytes]:
         "        tl.store(out_base + offsets, x_quant)",
         "        tl.store(out_base.to(tl.pointer_type(tl.uint8)) + offsets, x_quant_u8)",
         1, rel)
+    # The fused inverse-RoPE output tensor is float8_e4m3fn on the Python
+    # side, even though the kernel now uses software byte quantization. A100
+    # cannot compile its FP8 pointer argument; reinterpret *before* Triton
+    # JIT signature binding. Preserve the returned tensor's original dtype.
+    src = swap(
+        src,
+        """            out_ptr=out_buf,
+            scale_ptr=scale_buf,""",
+        """            out_ptr=(
+                out_buf.view(torch.uint8)
+                if quantize and current_platform.is_cuda()
+                and current_platform.is_device_capability_family(80)
+                else out_buf
+            ),
+            scale_ptr=scale_buf,""",
+        1, rel,
+    )
+    src = swap(
+        src,
+        """                torch.float8_e4m3fn if compile_key.quantize else torch.bfloat16,
+                shape=(compile_key.heads_per_group, 1, out_dim),""",
+        """                (
+                    torch.uint8
+                    if compile_key.quantize and current_platform.is_cuda()
+                    and current_platform.is_device_capability_family(80)
+                    else torch.float8_e4m3fn if compile_key.quantize else torch.bfloat16
+                ),
+                shape=(compile_key.heads_per_group, 1, out_dim),""",
+        1, rel,
+    )
     assert BELOW_SM89_DIRECT_CAST not in src, rel
     updates[root / rel] = src.encode()
     return updates
