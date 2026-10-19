@@ -13,8 +13,8 @@ else
   echo "ERROR: apptainer/singularity is required." >&2
   exit 2
 fi
-for f in latest/Singularity.def latest/port_sm80_stage1.py latest/port_sm80_numeric.py latest/port_sm80_indexer.py latest/port_sm80_engram.py latest/test_inverse_rope_contract.py \
-         latest/ampere_sparse.py latest/audit_source.py latest/verify_sm80_kernels.py latest/verify_sm80_numeric.py latest/verify_sm80_indexer.py latest/verify_sm80_engram.py \
+for f in latest/Singularity.def latest/port_sm80_stage1.py latest/port_sm80_numeric.py latest/port_sm80_indexer.py latest/port_sm80_engram.py latest/port_sm80_dspark.py latest/test_inverse_rope_contract.py \
+         latest/ampere_sparse.py latest/audit_source.py latest/verify_sm80_kernels.py latest/verify_sm80_numeric.py latest/verify_sm80_indexer.py latest/verify_sm80_engram.py latest/verify_sm80_dspark.py \
          patches/vendor/vllm/v1/attention/ops/fp8_sm80.py \
          patches/vendor/vllm/v1/attention/ops/mqa_logits_triton.py; do
   [[ -s "${ROOT}/${f}" ]] || { echo "ERROR: missing ${f}" >&2; exit 2; }
@@ -54,6 +54,6 @@ echo "vLLM=${VLLM_VERSION} image=${VLLM_IMAGE} cuda>=${CUDA_MIN_MAJOR}"
   cd "${ROOT}"
   "${BUILDER}" build "${EXTRA_ARGS[@]}" "${OUT}" "${DEF}"
 )
-"${BUILDER}" exec "${OUT}" python3 /opt/deepseek-sm80/audit_source.py --mode engram
-echo "STAGE4_SOURCE_BUILD_PASS: ${OUT}"
+"${BUILDER}" exec "${OUT}" python3 /opt/deepseek-sm80/audit_source.py --mode dspark
+echo "STAGE5_SOURCE_BUILD_PASS: ${OUT}"
 echo "WARNING: physical A100 FP8/MLA/indexer numerics and weight-loaded 1017 serving are UNVERIFIED."
