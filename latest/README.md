@@ -65,7 +65,7 @@ BASE_SIF=/path/to/upstream-vllm0320-cu130.sif bash latest/build_sif.sh
 ```
 
 The resulting default file is
-`deepseek-v41-flash-sm80-v0320-stage5-envfix-cu130.sif`. The build
+`deepseek-v41-flash-sm80-v0320-stage5-engram-u8-cu130.sif`. The build
 checks source patch integrity and inverse-RoPE completion, not CUDA runtime.
 
 ## **Actual A100 validation** (mandatory)
@@ -88,15 +88,15 @@ The configured OpenAI API port is 18005.
 Standalone GPU diagnostics (after SIF build):
 
 ```bash
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-envfix-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-engram-u8-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_kernels.py
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-envfix-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-engram-u8-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_numeric.py
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-envfix-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-engram-u8-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_indexer.py
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-envfix-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-engram-u8-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_engram.py
-apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-envfix-cu130.sif \
+apptainer exec --nv deepseek-v41-flash-sm80-v0320-stage5-engram-u8-cu130.sif \
   python3 /opt/deepseek-sm80/verify_sm80_dspark.py
 ```
 
@@ -146,14 +146,14 @@ rerunning the old, already-built `stage5-unverified` image.
 ```bash
 git switch vllm-v0320-sm80 && git pull --ff-only
 bash latest/build_sif.sh
-SIF=./deepseek-v41-flash-sm80-v0320-stage5-envfix-cu130.sif
+SIF=./deepseek-v41-flash-sm80-v0320-stage5-engram-u8-cu130.sif
 
 # Check import in the NEW image, with GPU:
 apptainer exec --nv "$SIF" python3 -c \
  'from vllm.v1.attention.ops.mqa_logits_triton import fp8_paged_mqa_logits_triton; print("SM80_MQA_IMPORT_PASS")'
 
 # Resume safe hardware test sequence (still experimental):
-SIF_PATH="$PWD/deepseek-v41-flash-sm80-v0320-stage5-envfix-cu130.sif" \
+SIF_PATH="$PWD/deepseek-v41-flash-sm80-v0320-stage5-engram-u8-cu130.sif" \
  ALLOW_EXPERIMENTAL=1 MODEL_PATH=/models/DeepSeek-V4.1-Flash-1017 \
  bash latest/serve_a100.sh
 ```
@@ -173,3 +173,46 @@ tools or an old vLLM `_C` module is **not** the correct response.
 CUDA image/version problem. If it passes and only the three ROCm warnings
 remain, look for the first later `Traceback` / failed numerical assertion
 rather than installing `amdsmi` or hiding warnings.
+
+## A100 Engram JIT fix: unsupported fp8e4nv argument (2026-10-19)
+
+An actual A100 CUDA 13 run passed the preceding kernel guards but failed
+during `verify_sm80_engram.py` at Triton JIT compile time with:
+
+```text
+ValueError: type fp8e4nv not supported in this architecture
+```
+
+Root cause: the old stage4 patch decoded FP8 bytes *inside* Triton, but
+passed a `torch.float8_e4m3fn` tensor to the JIT. On SM80, Triton rejects
+its **argument pointer type** before selecting the `SOFTWARE_FP8` constexpr
+branch. This is not fixed by replacing only `tl.load` conversions.
+
+**Fix**: the real `ParallelEngramEmbedding.lookup()` path now passes
+`_engram_sm80_weight_bytes(weight)`, a zero-copy, shape- and pointer-preserving
+`weight.view(torch.uint8)`, *before* calling the Triton kernel. The
+non-SM80 path is unchanged. The same byte view applies to the pinned CPU
+UVA table; no table copy or numerical re-quantization is performed.
+
+`verify_sm80_engram.py` now tests the **real model lookup method** as
+well as direct byte-typed Triton invocation, against independent FP8 byte,
+E8M0-scale and BF16 reference values. `test_engram_sm80_abi.py` checks
+the caller-side ABI invariant in the pinned upstream source replay and
+during `Singularity.def` build. Physical A100 GPU and CPU-pinned UVA
+correctness are distinct; the small GPU-table probe is still required.
+
+The previous `stage5-envfix` SIF is **stale** and must not be renamed.
+Rebuild after pulling the new branch version:
+
+```bash
+git switch vllm-v0320-sm80
+git pull --ff-only
+bash latest/build_sif.sh
+
+SIF="$PWD/deepseek-v41-flash-sm80-v0320-stage5-engram-u8-cu130.sif"
+singularity exec --nv "$SIF" python3 /opt/deepseek-sm80/verify_sm80_engram.py
+```
+
+Only after the above diagnostic passes should the complete launch guard
+sequence be retried. The preceding smoke tests do not prove full checkpoint
+correctness or the Engram pinned-CPU-UVA case.
