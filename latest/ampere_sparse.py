@@ -3,8 +3,8 @@
 """Experimental DeepSeek V4.1 A100/A800 (SM80) sparse MLA backend.
 
 A narrow adaptation of the existing ROCm Triton reference path. This module
-only establishes model/backend registration. In particular, cache, indexer
-and Engram FP8 paths still require a separate architecture-correct port.
+only establishes model/backend registration. In particular, this class uses the ROCm BF16 fallback as the correctness
+reference; cache, indexer and Engram FP8 have separate architecture patches.
 """
 from __future__ import annotations
 
@@ -32,10 +32,11 @@ class DeepseekV41AmpereMLAAttention(DeepseekV41ROCMAiterMLAAttention):
 
     backend_cls = DeepseekV41AmpereMLASparseBackend
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # The ROCm class turns this off for its BF16 einsum path. CUDA Marlin
-        # repacks the ordinary MXFP8 linear weight, so grouped-BMM uses the
-        # MXFP8 emulation kernel instead (same observation as the old SM80
-        # DeepSeek V4.1 backport). Further GPU numerical checks are mandatory.
-        self.wo_a.is_bmm = True
+    # Inherit the parent ROCm *BF16/einsum* output projection unchanged.
+    # Its _o_proj -> rocm_inv_rope_einsum -> _get_cached_wo_a_bf16 path
+    # expects ordinary MXFP8 linear weights with is_bmm=False. The earlier
+    # SM80 override is_bmm=True was inconsistent with this inherited path:
+    # it selected BMM-specialized post-load quantization without actually
+    # dispatching the corresponding CUDA grouped BMM forward. Do not
+    # change weight packing until an SM80 BMM forward is implemented
+    # and verified against this BF16/einsum reference.
