@@ -7,7 +7,6 @@ import os
 
 import torch
 
-from vllm import envs
 from vllm.platforms import current_platform
 from vllm.triton_utils import tl, triton
 from vllm.utils.platform_utils import num_compute_units
@@ -64,12 +63,29 @@ _PAGED_AUTOTUNE_CONFIGS = [
 #
 # Sixth confirmation of canon S8: every perturbation that raises resident
 # parallelism on this kernel family costs it more than the occupancy buys.
+# Compatibility with vLLM v0.32.0: older SM80 ports defined custom
+# indexer tuning flags in vllm.envs; upstream v0.32.0 does not. Preserve
+# their defaults: MAXNREG=0 (unconstrained), KV_GROUP_MIN_M=0 (automatic),
+# FACTOR_K_SCALE=1 (enabled). Read the optional process env directly.
+def _indexer_int_env(name: str, default: int = 0) -> int:
+    raw = os.environ.get(name, str(default))
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer; got {raw!r}") from exc
+
+
+def _indexer_factor_k_scale() -> bool:
+    # Match the older port's envs.py behavior for both default and overrides.
+    return os.environ.get("VLLM_INDEXER_LOGITS_FACTOR_K_SCALE", "1") == "1"
+
+
 _PREFILL_AUTOTUNE_CONFIGS = [
     triton.Config(
         {"BLOCK_N": 128},
         num_warps=4,
         num_stages=ns,
-        maxnreg=envs.VLLM_INDEXER_LOGITS_MAXNREG or None,
+        maxnreg=_indexer_int_env("VLLM_INDEXER_LOGITS_MAXNREG") or None,
     )
     for ns in (2, 4)
 ]
@@ -504,7 +520,7 @@ def _kv_group_min_ctas(device_index: int) -> int:
 def _select_prefill_kv_group(m: int, n: int, device_index: int = 0) -> int:
     if not _IS_SM80 or n < _KV_GROUP_MIN_N:
         return 1
-    min_m = envs.VLLM_INDEXER_LOGITS_KV_GROUP_MIN_M
+    min_m = _indexer_int_env("VLLM_INDEXER_LOGITS_KV_GROUP_MIN_M")
     if min_m:
         return _KV_GROUP if m >= min_m else 1
     grouped_ctas = m * triton.cdiv(n, _PREFILL_BLOCK_N * _KV_GROUP)
@@ -598,7 +614,7 @@ def _fp8_mqa_logits_triton_impl(
         BLOCK_H=BLOCK_H,
         BLOCK_D=BLOCK_D,
         KV_GROUP=kv_group,
-        FACTOR_K_SCALE=envs.VLLM_INDEXER_LOGITS_FACTOR_K_SCALE,
+        FACTOR_K_SCALE=_indexer_factor_k_scale(),
     )
     return logits
 

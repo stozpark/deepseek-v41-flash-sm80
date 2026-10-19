@@ -1,0 +1,159 @@
+name: vLLM-v0320-SM80-5stage-source-audit
+
+on:
+  push:
+    branches: [vllm-v0320-sm80]
+    paths:
+      - "latest/**"
+      - ".github/workflows/vllm-v0320-sm80.yml"
+      - "patches/vendor/vllm/v1/attention/ops/fp8_sm80.py"
+      - "patches/vendor/vllm/v1/attention/ops/mqa_logits_triton.py"
+  pull_request:
+    paths:
+      - "latest/**"
+      - ".github/workflows/vllm-v0320-sm80.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout SM80 repository
+        uses: actions/checkout@v4
+      - name: Checkout exact upstream vLLM release
+        uses: actions/checkout@v4
+        with:
+          repository: vllm-project/vllm
+          ref: 5df63a7203cdb9328d824a27b682e77c7b9928be
+          path: upstream
+          persist-credentials: false
+      - name: Check release/source pins
+        run: |
+          set -euo pipefail
+          grep -qx 'VLLM_VERSION=0.32.0' latest/VERSION.env
+          grep -qx 'VLLM_GIT_SHA=5df63a7203cdb9328d824a27b682e77c7b9928be' latest/VERSION.env
+          grep -qx 'MODEL_ID=deepseek-ai/DeepSeek-V4.1-Flash-1017' latest/VERSION.env
+          git -C upstream rev-parse HEAD | grep -qx 5df63a7203cdb9328d824a27b682e77c7b9928be
+          test ! -d upstream/vllm/models/deepseek_v4_1
+          test -f upstream/vllm/models/deepseek_v41/nvidia/model.py
+      - name: Python and Bash syntax
+        run: |
+          set -euo pipefail
+          python3 -m py_compile latest/audit_source.py latest/test_mqa_env_compat.py latest/port_sm80_stage1.py latest/port_sm80_numeric.py latest/port_sm80_indexer.py latest/port_sm80_engram.py latest/port_sm80_dspark.py latest/test_inverse_rope_contract.py latest/test_engram_sm80_abi.py latest/test_sm80_woa_contract.py latest/test_sm80_fp8_pointer_abi.py latest/ampere_sparse.py latest/verify_sm80_kernels.py latest/verify_sm80_numeric.py latest/verify_sm80_indexer.py latest/verify_sm80_engram.py latest/verify_sm80_dspark.py latest/smoke_vision_dspark.py latest/verify_1017_serving_semantics.py latest/preflight_sif.py
+          python3 -m py_compile patches/vendor/vllm/v1/attention/ops/fp8_sm80.py
+          python3 -m py_compile patches/vendor/vllm/v1/attention/ops/mqa_logits_triton.py
+          for f in latest/*.sh; do bash -n "$f"; done
+      - name: Verify launcher dry-runs and TP16 rejection
+        run: |
+          set -euo pipefail
+          DRY_RUN=1 TP_SIZE=8 bash ./latest/serve_a100.sh > /tmp/serve-a100.txt
+          grep -q 'TRITON_MLA_SPARSE_DSV41' /tmp/serve-a100.txt
+          grep -q 'DeepSeek-V4.1-Flash-1017' /tmp/serve-a100.txt
+          if DRY_RUN=1 TP_SIZE=16 bash ./latest/serve_a100.sh; then
+            echo 'Unexpected native TP16 acceptance' >&2; exit 1
+          fi
+          DRY_RUN=1 bash ./latest/serve_two_tp8.sh > /tmp/two-tp8.txt
+          grep -q 'GPUs=0,1,2,3,4,5,6,7' /tmp/two-tp8.txt
+          grep -q 'GPUs=8,9,10,11,12,13,14,15' /tmp/two-tp8.txt
+      - name: Verify pre-model static image manifest and DSpark safety guard
+        run: |
+          set -euo pipefail
+          python3 latest/preflight_sif.py --source-only
+          if ALLOW_EXPERIMENTAL=1 ENABLE_DSPARK=1 bash latest/serve_a100.sh >/tmp/dspark-denied-out.txt 2>/tmp/dspark-denied-err.txt; then
+            echo 'DSpark1017 unexpectedly allowed without known-corruption diagnostic flag' >&2
+            exit 1
+          fi
+          grep -q 'known chat/tool corruption' /tmp/dspark-denied-err.txt
+      - name: Audit pristine upstream and plan pinned patch
+        run: |
+          set -euo pipefail
+          python3 latest/audit_source.py --source-root upstream/vllm --mode baseline
+          python3 latest/port_sm80_stage1.py --skip-version-check \
+            --vllm-root upstream/vllm --dry-run
+      - name: Replay stage1 patch and static audit
+        run: |
+          set -euo pipefail
+          python3 latest/port_sm80_stage1.py --skip-version-check \
+            --vllm-root upstream/vllm
+          python3 latest/audit_source.py --source-root upstream/vllm --mode port
+          python3 latest/test_mqa_env_compat.py --source-root upstream/vllm
+          python3 -m py_compile \
+            upstream/vllm/models/deepseek_v41/nvidia/model.py \
+            upstream/vllm/models/deepseek_v41/ampere/ampere_sparse.py \
+            upstream/vllm/v1/attention/backends/registry.py \
+            upstream/vllm/model_executor/kernels/linear/scaled_mm/cutlass.py
+      - name: Replay stage2 FP8 numeric patch (source checks only)
+        run: |
+          set -euo pipefail
+          python3 latest/port_sm80_numeric.py --skip-version-check --vllm-root upstream/vllm --dry-run
+          python3 latest/port_sm80_numeric.py --skip-version-check --vllm-root upstream/vllm
+          python3 latest/audit_source.py --source-root upstream/vllm --mode numeric
+          python3 latest/test_inverse_rope_contract.py --source-root upstream/vllm
+          python3 -m py_compile latest/verify_sm80_numeric.py
+          if python3 latest/port_sm80_numeric.py --skip-version-check --vllm-root upstream/vllm; then
+            echo 'ERROR: numeric patch was silently applied twice' >&2
+            exit 1
+          fi
+      - name: Replay stage3 DeepGEMM-free SM80 indexer (source only)
+        run: |
+          set -euo pipefail
+          python3 latest/port_sm80_indexer.py --skip-version-check --source-root upstream/vllm --dry-run
+          python3 latest/port_sm80_indexer.py --skip-version-check --source-root upstream/vllm
+          python3 latest/audit_source.py --source-root upstream/vllm --mode indexer
+          python3 -m py_compile latest/verify_sm80_indexer.py
+          if python3 latest/port_sm80_indexer.py --skip-version-check --source-root upstream/vllm; then
+            echo 'ERROR: indexer patch unexpectedly re-applied' >&2
+            exit 1
+          fi
+      - name: Replay stage4 Engram byte-exact SM80 lookup (source only)
+        run: |
+          set -euo pipefail
+          python3 latest/port_sm80_engram.py --skip-version-check --source-root upstream/vllm --dry-run
+          python3 latest/port_sm80_engram.py --skip-version-check --source-root upstream/vllm
+          python3 latest/audit_source.py --source-root upstream/vllm --mode engram
+          python3 latest/test_engram_sm80_abi.py --source-root upstream/vllm
+          python3 latest/test_sm80_woa_contract.py --source-root upstream/vllm
+          python3 latest/test_sm80_fp8_pointer_abi.py --source-root upstream/vllm
+          python3 -m py_compile latest/verify_sm80_engram.py
+          if python3 latest/port_sm80_engram.py --skip-version-check --source-root upstream/vllm; then
+            echo 'ERROR: Engram patch unexpectedly re-applied' >&2
+            exit 1
+          fi
+      - name: Replay stage5 DSpark5 per-row causal patch
+        run: |
+          set -euo pipefail
+          python3 latest/port_sm80_dspark.py --skip-version-check --source-root upstream/vllm --dry-run
+          python3 latest/port_sm80_dspark.py --skip-version-check --source-root upstream/vllm
+          python3 latest/audit_source.py --source-root upstream/vllm --mode dspark
+          if python3 latest/port_sm80_dspark.py --skip-version-check --source-root upstream/vllm; then
+            echo 'ERROR: DSpark patch unexpectedly re-applied' >&2
+            exit 1
+          fi
+      - name: Verify Vision and DSpark launch modes
+        run: |
+          set -euo pipefail
+          DRY_RUN=1 ENABLE_VISION=1 ENABLE_DSPARK=0 bash latest/serve_a100.sh > /tmp/vision-only.log
+          DRY_RUN=1 ENABLE_VISION=0 ENABLE_DSPARK=1 bash latest/serve_a100.sh > /tmp/dspark-only.log
+          DRY_RUN=1 ENABLE_VISION=1 ENABLE_DSPARK=1 bash latest/serve_a100.sh > /tmp/vision-dspark.log
+          grep -q 'mm-encoder-tp-mode' /tmp/vision-only.log
+          grep -q 'num_speculative_tokens' /tmp/dspark-only.log
+          grep -q 'num_speculative_tokens' /tmp/vision-dspark.log
+          grep -q 'mm-encoder-tp-mode' /tmp/vision-dspark.log
+          if DRY_RUN=1 ENABLE_DSPARK=2 bash latest/serve_a100.sh; then exit 1; fi
+      - name: Verify patch is fail-closed on double application
+        run: |
+          set -euo pipefail
+          if python3 latest/port_sm80_stage1.py --skip-version-check \
+                --vllm-root upstream/vllm; then
+            echo 'ERROR: version-guarded patch allowed a second application' >&2
+            exit 1
+          fi
+      - name: Publish source-validation status
+        run: |
+          echo 'STAGE5_SOURCE_AUDIT_PASS'
+          echo 'NOT A100 INFERENCE VALIDATION.'
+          echo 'Next: physical A100 numeric parity, full model load, Engram and end-to-end comparison.'

@@ -1,0 +1,64 @@
+Bootstrap: docker
+From: vllm/vllm-openai:v0.32.0
+
+%labels
+  Maintainer stozpark
+  Model deepseek-ai/DeepSeek-V4.1-Flash-1017
+  VLLMVersion 0.32.0
+  CUDAFamily 13
+  SM80Status STAGE5_SOURCE_ONLY_GPU_NUMERICS_NOT_VALIDATED
+  UpstreamCommit 5df63a7203cdb9328d824a27b682e77c7b9928be
+
+%files
+  latest/port_sm80_stage1.py /opt/deepseek-sm80/latest/port_sm80_stage1.py
+  latest/port_sm80_numeric.py /opt/deepseek-sm80/latest/port_sm80_numeric.py
+  latest/port_sm80_indexer.py /opt/deepseek-sm80/latest/port_sm80_indexer.py
+  latest/port_sm80_engram.py /opt/deepseek-sm80/latest/port_sm80_engram.py
+  latest/port_sm80_dspark.py /opt/deepseek-sm80/latest/port_sm80_dspark.py
+  latest/ampere_sparse.py /opt/deepseek-sm80/latest/ampere_sparse.py
+  latest/audit_source.py /opt/deepseek-sm80/audit_source.py
+  latest/test_mqa_env_compat.py /opt/deepseek-sm80/test_mqa_env_compat.py
+  latest/test_inverse_rope_contract.py /opt/deepseek-sm80/test_inverse_rope_contract.py
+  latest/test_engram_sm80_abi.py /opt/deepseek-sm80/test_engram_sm80_abi.py
+  latest/test_sm80_woa_contract.py /opt/deepseek-sm80/test_sm80_woa_contract.py
+  latest/test_sm80_fp8_pointer_abi.py /opt/deepseek-sm80/test_sm80_fp8_pointer_abi.py
+  latest/verify_sm80_kernels.py /opt/deepseek-sm80/verify_sm80_kernels.py
+  latest/verify_sm80_numeric.py /opt/deepseek-sm80/verify_sm80_numeric.py
+  latest/verify_sm80_indexer.py /opt/deepseek-sm80/verify_sm80_indexer.py
+  latest/verify_sm80_engram.py /opt/deepseek-sm80/verify_sm80_engram.py
+  latest/verify_sm80_dspark.py /opt/deepseek-sm80/verify_sm80_dspark.py
+  patches/vendor/vllm/v1/attention/ops/fp8_sm80.py /opt/deepseek-sm80/patches/vendor/vllm/v1/attention/ops/fp8_sm80.py
+  patches/vendor/vllm/v1/attention/ops/mqa_logits_triton.py /opt/deepseek-sm80/patches/vendor/vllm/v1/attention/ops/mqa_logits_triton.py
+
+%environment
+  export PYTHONUNBUFFERED=1
+  export TOKENIZERS_PARALLELISM=false
+  export CUDA_DEVICE_ORDER=PCI_BUS_ID
+  export NCCL_ALGO=Ring
+  export NCCL_PROTO=Simple
+
+%post
+  set -eu
+  python3 - <<'PY'
+import importlib.metadata as md
+import torch
+assert md.version("vllm") == "0.32.0", md.version("vllm")
+cuda = str(torch.version.cuda or "")
+assert cuda and int(cuda.split(".")[0]) >= 13, cuda
+print("upstream vLLM 0.32.0 / CUDA >=13:", cuda)
+PY
+  python3 /opt/deepseek-sm80/latest/port_sm80_stage1.py
+  python3 /opt/deepseek-sm80/latest/port_sm80_numeric.py
+  python3 /opt/deepseek-sm80/latest/port_sm80_indexer.py
+  python3 /opt/deepseek-sm80/latest/port_sm80_engram.py
+  python3 /opt/deepseek-sm80/latest/port_sm80_dspark.py
+  python3 /opt/deepseek-sm80/audit_source.py --mode dspark
+  python3 /opt/deepseek-sm80/test_engram_sm80_abi.py --source-root "$(python3 -c 'import vllm; print(vllm.__path__[0])')"
+  python3 /opt/deepseek-sm80/test_sm80_woa_contract.py --source-root "$(python3 -c 'import vllm; print(vllm.__path__[0])')"
+  python3 /opt/deepseek-sm80/test_sm80_fp8_pointer_abi.py --source-root "$(python3 -c 'import vllm; print(vllm.__path__[0])')"
+  python3 /opt/deepseek-sm80/test_mqa_env_compat.py --source-root "$(python3 -c 'import vllm; print(vllm.__path__[0])')"
+  python3 /opt/deepseek-sm80/test_inverse_rope_contract.py --source-root "$(python3 -c 'import vllm; print(vllm.__path__[0])')"
+  echo "STAGE5_SOURCE_BUILT: GPU numeric and end-to-end inference remain unvalidated"
+
+%runscript
+  exec "$@"
