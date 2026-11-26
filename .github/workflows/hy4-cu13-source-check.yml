@@ -1,0 +1,19 @@
+name: Hy4 CU13 source check
+on:
+  workflow_dispatch:
+  push:
+    branches: [hy4-sm80-cu13]
+    paths: ['hy4/cu13/**', '.github/workflows/hy4-cu13-source-check.yml']
+permissions:
+  contents: read
+jobs:
+  source-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile overlay and validate shell syntax
+        run: |
+          python3 -m compileall -q hy4/cu13
+          for f in hy4/cu13/*.sh; do bash -n "$f"; done
+      - name: Replay overlay against exact upstream pin
+        run: bash hy4/cu13/prepare_source.sh "$RUNNER_TEMP/vllm-source"
