@@ -148,5 +148,8 @@ if __name__ == "__main__":
     from test_gpu_integration import test_indexer_chain, test_large_addresses
     test_indexer_chain()
     test_large_addresses()
+    from test_hy4_math import test_ihc, test_mrope
+    test_ihc()
+    test_mrope()
     torch.cuda.synchronize()
     print("HYV4_SM80_KERNELS=PASS")

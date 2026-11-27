@@ -28,6 +28,11 @@ def fixture_config(cfg, fp8=False):
                 del target[key]
         if not fp8:
             target.pop("quantization_config",None)
+    # Even with language_model_only, upstream HYV4VLConfig enforces this
+    # shape during construction. The actual vision tower is still disabled.
+    vision=cfg.setdefault("vision_config",{})
+    vision["out_hidden_size"]=updates["hidden_size"]
+    vision["text_hidden_size"]=updates["hidden_size"]
     return cfg
 
 

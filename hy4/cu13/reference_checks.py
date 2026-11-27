@@ -39,3 +39,21 @@ def compare_responses(reference, actual, atol=0.05):
     if any(not (math.isfinite(x) and math.isfinite(y)) or abs(x-y) > atol
            for x, y in zip(a, b)):
         raise AssertionError("chosen-token logprob mismatch")
+    # Top-5 candidate comparisons: permit boundary near-ties, but require
+    # all shared candidates to agree and non-overlap to be near the cutoff.
+    top_a,top_b=reference.get("top_logprobs"),actual.get("top_logprobs")
+    if top_a is None and top_b is None:
+        return
+    if not top_a or not top_b or len(top_a)!=len(a) or len(top_b)!=len(b):
+        raise AssertionError("missing top candidate logprobs")
+    for u,v in zip(top_a,top_b):
+        if not u or not v or not all(math.isfinite(x) for x in [*u.values(),*v.values()]):
+            raise AssertionError("invalid top candidate logprobs")
+        if not set(u)&set(v):
+            raise AssertionError("no common top candidates")
+        if any(abs(u[k]-v[k])>atol for k in set(u)&set(v)):
+            raise AssertionError("top candidate logprob mismatch")
+        if any(u[k]>min(v.values())+atol for k in set(u)-set(v)):
+            raise AssertionError("missing unambiguous reference candidate")
+        if any(v[k]>min(u.values())+atol for k in set(v)-set(u)):
+            raise AssertionError("unexpected unambiguous candidate")

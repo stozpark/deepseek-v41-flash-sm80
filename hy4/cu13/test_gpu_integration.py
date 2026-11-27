@@ -63,11 +63,19 @@ def test_indexer_chain():
     # Use page-aligned width for persistent Top-K.
     dec = fp8_paged_mqa_logits_triton(q8[:,None], cache, w, lens[:,None],
                                       table.cuda(), 2240)
+    # The actual auto decode selector chooses persistent_topk on SM80,
+    # which requires the per-device WorkspaceManager used by GPUModelRunner.
+    from vllm.v1.worker.workspace import init_workspace_manager, reset_workspace_manager
     selector = get_indexer_topk("auto")
     pre_ids = torch.full((2,topk), -1, device="cuda", dtype=torch.int32)
     dec_ids = torch.full_like(pre_ids, -1)
-    selector.forward_prefill(pre, None, lens, pre_ids, topk)
-    selector(dec, lens[:,None], 1, dec_ids, topk, max(lengths))
+    init_workspace_manager(torch.device("cuda", torch.cuda.current_device()))
+    try:
+        selector.forward_prefill(pre, None, lens, pre_ids, topk)
+        selector(dec, lens[:,None], 1, dec_ids, topk, max(lengths))
+        torch.cuda.synchronize()
+    finally:
+        reset_workspace_manager()
     refs = []
     for r,n in enumerate(lengths):
         offset = 0 if r == 0 else lengths[0]

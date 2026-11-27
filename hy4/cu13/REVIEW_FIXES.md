@@ -23,3 +23,10 @@ response parity, fixture immutability). No physical A100, Docker/SIF builder
 or full model weights were available in the authoring environment. GPU and
 model integration tests are candidate code that must be run on the real
 cluster. No GPU success, full-checkpoint serving, latency or quality claim.
+
+Follow-up source audit fixed the standalone persistent Top-K workspace
+initialization and the VL fixture projector output dimension (upstream
+HYV4VLConfig checks it even with vision disabled). Added GPU iHC/gate and
+1D/2D trailing-64 M-RoPE math checks, top candidate logprob comparison,
+and a rank/layer/phase coverage log validator with CPU negative tests.
+The GPU tests remain unexecuted until a real SM80 runner is available.

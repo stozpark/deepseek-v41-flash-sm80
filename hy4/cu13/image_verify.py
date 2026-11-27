@@ -18,7 +18,7 @@ PORT_FILES = (
     "image_verify.py", "audited_worker.py", "runtime_preflight.py", "serve.sh",
     "test_kernels.py", "test_gpu_integration.py", "test_marlin.py",
     "reference_checks.py", "make_fixture.py", "serve_fixture.sh",
-    "serve_probe.py", "nccl_probe.py",
+    "serve_probe.py", "nccl_probe.py", "test_hy4_math.py", "validate_logs.py",
 )
 
 

@@ -5,6 +5,7 @@ import pytest
 from image_verify import create_manifest, verify_files, MODULES, PREFIX, PORT_FILES
 from reference_checks import check_topk, compare_responses
 from make_fixture import fixture_config
+from validate_logs import validate
 
 
 def test_manifest_and_drift(tmp_path):
@@ -61,3 +62,29 @@ def test_fixture_config_does_not_mutate_source():
     assert a["text_config"]["num_hidden_layers"]==4
     assert "quantization_config" not in a and "quantization_config" in b
     assert "dfly_num_hidden_layers" not in a
+    assert a["vision_config"]["out_hidden_size"]==a["text_config"]["hidden_size"]
+    assert a["vision_config"]["text_hidden_size"]==a["text_config"]["hidden_size"]
+
+def test_rank_coverage():
+    lines=[]
+    for p in range(2):
+        for t in range(2):
+            lines.append(f"HY4_MODEL_DISPATCH=PASS pp={p} tp={t} layers={p*2}:{p*2+2} attention=2 moe={1 if p==0 else 2} fp8=True")
+            for l in range(p*2,p*2+2):
+                for phase in ("prefill","decode"):
+                    lines.append(f"HY4_SPARSE_FORWARD=PASS pp={p} tp={t} layer={l} phase={phase}")
+    text="\n".join(lines)
+    assert validate(text,2,[2,2],True)==(4,16)
+    with pytest.raises(AssertionError,match="forward coverage"):
+        validate("\n".join(lines[:-1]),2,[2,2],True)
+    with pytest.raises(AssertionError,match="rank dispatch"):
+        validate("\n".join(lines[1:]),2,[2,2],True)
+    with pytest.raises(AssertionError,match="NCCL"):
+        validate(text,2,[2,2],True,True)
+
+def test_top_candidate_comparison():
+    r={"prompt":"x","prompt_tokens":1,"tokens":["a"],"logprobs":[-0.2],
+       "top_logprobs":[{"a":-0.2,"b":-1.0,"c":-1.01}]}
+    compare_responses(r,dict(r,top_logprobs=[{"a":-0.21,"b":-1.01,"d":-1.0}]))
+    with pytest.raises(AssertionError,match="top candidate"):
+        compare_responses(r,dict(r,top_logprobs=[{"a":-0.2,"b":-2.0,"c":-1.01}]))

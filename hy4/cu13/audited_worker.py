@@ -46,6 +46,7 @@ class AuditedWorker(Worker):
                     f"layer {m.layer_id}: wrong gate path")
             require((m.indexer is not None)==(cfg.indexer_types[m.layer_id]=="full"),
                     f"layer {m.layer_id}: wrong IndexCache pattern")
+            require(not m.mla_attn.use_shardq, f"layer {m.layer_id}: actual ShardQ enabled")
             if quantized and m.layer_id!=0:
                 for projection in (m.o_proj,m.linear_gate):
                     kernel = getattr(getattr(projection,"scheme",None),"linear_kernel",None)

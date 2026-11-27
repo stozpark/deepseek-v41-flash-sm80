@@ -98,7 +98,9 @@ node, not all kernels on all eight GPUs; BF16 preflight checks each GPU.
    MASTER_ADDR on the two nodes, one visible GPU each, 2,2 partition.
    Run serve_probe.py --output fixture-pp2.json --reference fixture-pp1.json.
    Require all worker dispatch/forward logs, nonempty logits, and matched
-   tokens/logprobs. Repeat with 1,3 partition and a different batch budget.
+   tokens/logprobs. Verify rank/layer coverage using:
+       python3 validate_logs.py node0.log node1.log --tp 1 --partition 2,2
+   Repeat with 1,3 partition and a different batch budget.
    Repeat FP8 fixture for Marlin dispatch. Dummy weight initialization and
    PP arithmetic can differ; a mismatch is a failure to investigate, not
    a reason to weaken tolerance or declare parity.
@@ -106,7 +108,9 @@ node, not all kernels on all eight GPUs; BF16 preflight checks each GPU.
        torchrun --nnodes=2 --nproc_per_node=8 --node_rank=0 \
          --master_addr=MASTER_IP --master_port=29600 nccl_probe.py
    On node 1 use --node_rank=1. Use the real routable IP and cluster NIC
-   configuration. Require all 16 ranks PASS.
+   configuration. Require all 16 ranks PASS. For full-model logs include
+   the two NCCL logs and run validate_logs.py with --tp 8 --partition 37,41
+   --fp8 --nccl. Use fresh log files for each run/partition.
 5. Full official checkpoint: first 37,41 and 4K eager; capture API logits,
    then 39,39 with shared indices. Compare against a trusted run of the
    same checkpoint when available; PP-to-PP self-consistency alone
@@ -115,7 +119,9 @@ node, not all kernels on all eight GPUs; BF16 preflight checks each GPU.
    budgets, e.g. --needle 32000. Use MAX_NUM_SEQS=2 or more and
    --interleaved for genuine overlapping requests. Repeat with different
    MAX_BATCHED_TOKENS to test chunk boundaries. The probe checks chosen
-   tokens/logprobs, not full-vocabulary equality or a quality benchmark.
+   tokens/logprobs and top candidate logprobs, not full-vocabulary equality
+   or a quality benchmark. Use --model-name for the official endpoint and
+   --label to identify its exact model revision/hardware/config.
    Preserve logs, JSON outputs, image ID, SIF hash and checkpoint revision.
 
 Do not enable graphs, prefix caching, DFly2 or 1M as part of these initial
