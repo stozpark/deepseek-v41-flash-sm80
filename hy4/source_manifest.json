@@ -1,0 +1,61 @@
+{
+  "source_repo": "https://github.com/SiluPanda/vllm.git",
+  "source_commit": "3470b0db1820f699960d1376223602739a0f4ac3",
+  "upstream_pr": "https://github.com/vllm-project/vllm/pull/68633",
+  "files": [
+    {
+      "path": "vllm/models/hy_v4/nvidia/attention.py",
+      "git_blob_sha": "f4b15ebdc9e3d88610986806ddd1d420e8766a55",
+      "replacements": [
+        [
+          "            enable_sink = sink_backend is not None\n",
+          "            if (current_platform.is_cuda()\n                    and not current_platform.has_device_capability(89)\n                    and sink_backend is None):\n                raise RuntimeError(\"HY4 SM80 requires a sink-aware sparse backend\")\n            enable_sink = sink_backend is not None\n"
+        ],
+        [
+          "        if selected_cls.supports_sink():\n            return selected_cls\n",
+          "        if selected_cls.get_name() == \"TRITON_MLA_SPARSE\":\n            from .triton_mla_sparse import HYV4TritonMLASparseBackend\n\n            return HYV4TritonMLASparseBackend\n        if selected_cls.supports_sink():\n            return selected_cls\n"
+        ]
+      ]
+    },
+    {
+      "path": "vllm/models/hy_v4/nvidia/indexer_fusion.py",
+      "git_blob_sha": "a806c7933399cc6a07501c8f28bbc3a8b3f3eb52",
+      "replacements": [
+        [
+          "from vllm.triton_utils import tl, triton\n",
+          "from vllm.triton_utils import tl, triton\nfrom vllm.v1.attention.ops.common import f32_to_e4m3_uint8\n"
+        ],
+        [
+          "    is_neox: tl.constexpr,\n):\n    token = tl.program_id(0).to(tl.int64)\n",
+          "    is_neox: tl.constexpr,\n    EMULATE_FP8: tl.constexpr,\n):\n    token = tl.program_id(0).to(tl.int64)\n"
+        ],
+        [
+          "    if is_neox:\n        tl.store(\n            out_base + 64 + offs32,\n            tl.clamp(r0 / q_scale, fp8_min, fp8_max).to(q_fp8.dtype.element_ty),\n        )\n        tl.store(\n            out_base + 96 + offs32,\n            tl.clamp(r1 / q_scale, fp8_min, fp8_max).to(q_fp8.dtype.element_ty),\n        )\n    else:\n        tl.store(\n            out_base + 64 + offs32 * 2,\n            tl.clamp(r0 / q_scale, fp8_min, fp8_max).to(q_fp8.dtype.element_ty),\n        )\n        tl.store(\n            out_base + 64 + offs32 * 2 + 1,\n            tl.clamp(r1 / q_scale, fp8_min, fp8_max).to(q_fp8.dtype.element_ty),\n        )\n    tl.store(\n        out_base + offs64,\n        tl.clamp(q_nope / q_scale, fp8_min, fp8_max).to(q_fp8.dtype.element_ty),\n    )\n",
+          "    r0_scaled = tl.clamp(r0 / q_scale, fp8_min, fp8_max)\n    r1_scaled = tl.clamp(r1 / q_scale, fp8_min, fp8_max)\n    q_nope_scaled = tl.clamp(q_nope / q_scale, fp8_min, fp8_max)\n    if EMULATE_FP8:\n        r0_out = f32_to_e4m3_uint8(r0_scaled)\n        r1_out = f32_to_e4m3_uint8(r1_scaled)\n        q_nope_out = f32_to_e4m3_uint8(q_nope_scaled)\n    else:\n        r0_out = r0_scaled.to(q_fp8.dtype.element_ty)\n        r1_out = r1_scaled.to(q_fp8.dtype.element_ty)\n        q_nope_out = q_nope_scaled.to(q_fp8.dtype.element_ty)\n    if is_neox:\n        tl.store(out_base + 64 + offs32, r0_out)\n        tl.store(out_base + 96 + offs32, r1_out)\n    else:\n        tl.store(out_base + 64 + offs32 * 2, r0_out)\n        tl.store(out_base + 64 + offs32 * 2 + 1, r1_out)\n    tl.store(out_base + offs64, q_nope_out)\n"
+        ],
+        [
+          "    fp8_min, fp8_max = get_fp8_min_max()\n    _fused_indexer_q_rope_quant_kernel",
+          "    fp8_min, fp8_max = get_fp8_min_max()\n    emulate_fp8 = not current_platform.has_device_capability(89)\n    q_fp8_arg = q_fp8.view(torch.uint8) if emulate_fp8 else q_fp8\n    _fused_indexer_q_rope_quant_kernel"
+        ],
+        [
+          "        q_fp8,\n        q_fp8.stride(0),\n        q_fp8.stride(1),\n",
+          "        q_fp8_arg,\n        q_fp8_arg.stride(0),\n        q_fp8_arg.stride(1),\n"
+        ],
+        [
+          "        is_neox=is_neox,\n        num_warps=1,\n        enable_fp_fusion=False,\n",
+          "        is_neox=is_neox,\n        EMULATE_FP8=emulate_fp8,\n        num_warps=1,\n        enable_fp_fusion=False,\n"
+        ]
+      ]
+    },
+    {
+      "path": "vllm/models/hy_v4/nvidia/model.py",
+      "git_blob_sha": "8eebff472fbf4522752b6d9bda566c028024cb5a",
+      "replacements": [
+        [
+          "            buffers = {k: v[: positions.shape[0]] for k, v in self.pp_buffers.items()}\n",
+          "            # M-RoPE positions are [3, T], not [T]. Transfer all T rows.\n            buffers = {k: v[:full_num_tokens] for k, v in self.pp_buffers.items()}\n"
+        ]
+      ]
+    }
+  ]
+}
