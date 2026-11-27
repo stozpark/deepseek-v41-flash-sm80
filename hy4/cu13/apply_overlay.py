@@ -2,6 +2,7 @@
 """Fail-closed overlay for the inspected vLLM #68633 head."""
 import argparse
 import ast
+import hashlib
 from pathlib import Path
 import subprocess
 
@@ -15,20 +16,35 @@ def replace_once(text, old, new, label):
     return text.replace(old, new, 1)
 
 
+def git(src, *args):
+    return subprocess.check_output(["git", "-C", str(src), *args])
+
+
+def pinned_text(src, path, expected_sha):
+    rel = path.relative_to(src).as_posix()
+    raw = git(src, "show", f"{PIN}:{rel}")
+    digest = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+    if digest != expected_sha:
+        raise RuntimeError(f"pinned source blob mismatch: {rel}")
+    return raw.decode("utf-8")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("source", type=Path)
-    ap.add_argument("--check-only", action="store_true")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--check-only", action="store_true")
+    mode.add_argument("--verify-applied", action="store_true")
     args = ap.parse_args()
     src = args.source.resolve()
-    head = subprocess.check_output(
-        ["git", "-C", str(src), "rev-parse", "HEAD"], text=True
-    ).strip()
+    head = git(src, "rev-parse", "HEAD").decode().strip()
     if head != PIN:
         raise RuntimeError(f"expected {PIN}, got {head}")
+    if not args.verify_applied and git(src, "status", "--porcelain", "--untracked-files=all"):
+        raise RuntimeError("expected clean pinned checkout")
     model = src / "vllm/models/hy_v4/nvidia"
     attention = model / "attention.py"
-    a = attention.read_text()
+    a = pinned_text(src, attention, "f4b15ebdc9e3d88610986806ddd1d420e8766a55")
     a = replace_once(
         a,
         '            and self.scale_fmt == "ue8m0"\n'
@@ -107,7 +123,7 @@ def main():
     )
     model_path = model / "model.py"
     m = replace_once(
-        model_path.read_text(),
+        pinned_text(src, model_path, "8eebff472fbf4522752b6d9bda566c028024cb5a"),
         "buffers = {k: v[: positions.shape[0]] for k, v in self.pp_buffers.items()}",
         "buffers = {k: v[:full_num_tokens] for k, v in self.pp_buffers.items()}",
         "PP M-RoPE token axis: positions[-1] not positions[0]",
@@ -116,15 +132,34 @@ def main():
         attention: a, model_path: m,
         model / "sm80_sparse.py": (HERE / "sm80_sparse.py").read_text(),
         model / "sm80_indexer_quant.py": (HERE / "sm80_indexer_quant.py").read_text(),
+        model / "sink_math.py": (HERE / "sink_math.py").read_text(),
     }
     for path, data in changes.items():
         ast.parse(data, filename=str(path))
-    if not args.check_only:
-        for path in changes:
-            if path.name.startswith("sm80_") and path.exists():
-                raise RuntimeError(f"refusing to overwrite {path}")
+    new_paths = {p for p in changes if p not in (attention, model_path)}
+    if args.verify_applied:
+        expected = {p.relative_to(src).as_posix() for p in changes}
+        tracked = git(src, "diff", "--name-only", "-z", "HEAD").decode().split("\0")
+        untracked = git(src, "ls-files", "--others", "--exclude-standard", "-z").decode().split("\0")
+        actual = set(tracked + untracked) - {""}
+        if actual != expected:
+            raise RuntimeError(f"source drift: extra={actual-expected}, missing={expected-actual}")
+        if git(src, "diff", "--cached", "--name-only"):
+            raise RuntimeError("refusing staged changes")
         for path, data in changes.items():
-            path.write_text(data)
+            if path.is_symlink() or path.read_bytes() != data.encode("utf-8"):
+                raise RuntimeError(f"overlay mismatch: {path}")
+        print("HYV4_SM80_OVERLAY=VERIFIED")
+        return
+    for path in (attention, model_path):
+        if path.is_symlink() or path.read_bytes() != git(src, "show", f"{PIN}:{path.relative_to(src).as_posix()}"):
+            raise RuntimeError(f"working tree differs from pin: {path}")
+    for path in new_paths:
+        if path.exists() or path.is_symlink():
+            raise RuntimeError(f"refusing to overwrite {path}")
+    if not args.check_only:
+        for path, data in changes.items():
+            path.write_bytes(data.encode("utf-8"))
     print(f"HYV4_SM80_OVERLAY={'CHECKED' if args.check_only else 'APPLIED'}")
 
 

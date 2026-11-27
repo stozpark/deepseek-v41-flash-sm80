@@ -34,6 +34,7 @@ def test_sink():
                 q, kv, ids, sm_scale=256**-0.5, kv_lora_rank=512,
                 return_lse=True, num_kv_splits=splits,
             )
+            assert torch.isfinite(out).all() and not out[0].any()
             out, total_lse = apply_attention_sink(out, lse, sinks)
             assert torch.isfinite(out).all() and not out[0].any()
             torch.testing.assert_close(out.float().cpu(), expected, atol=0.015, rtol=0.025)
@@ -55,7 +56,7 @@ def test_quant():
             ref_scale = torch.exp2(torch.ceil(torch.log2(ref_scale)))
         ref = (x / ref_scale).clamp(-448, 448).to(torch.float8_e4m3fn)
         torch.testing.assert_close(scales.cpu(), ref_scale, rtol=1e-6, atol=0)
-        decoded = actual.float().cpu() * scales.cpu()
+        decoded = actual.view(torch.uint8).cpu().view(torch.float8_e4m3fn).float() * scales.cpu()
         expected = ref.float() * ref_scale
         torch.testing.assert_close(decoded, expected, atol=0.0, rtol=0.14)
         agreement = (actual.view(torch.uint8).cpu() == ref.view(torch.uint8)).float().mean()
@@ -103,10 +104,46 @@ def test_mqa():
     print("prefill/paged MQA valid scores PASS")
 
 
+def test_native_indexer_insert():
+    """Exercise the real CUDA cache insertion, including skipped slots and padded page strides."""
+    from vllm import _custom_ops as ops
+
+    torch.manual_seed(53)
+    page, dim = 64, 128
+    slots = torch.tensor([0, 63, 64, 129, -1, 191], dtype=torch.int64)
+    keys = torch.randn(slots.numel(), dim, dtype=torch.bfloat16)
+    keys[1].zero_()
+    keys[3] *= 1e-6
+    backing = torch.full((3, page * (dim + 4) + 32), 0xA5,
+                         device="cuda", dtype=torch.uint8)
+    cache = backing[:, :-32].view(3, page, dim + 4)
+    ops.indexer_k_quant_and_cache(keys.cuda(), cache, slots.cuda(), dim, "ue8m0")
+    torch.cuda.synchronize()
+    result = backing.cpu()
+    expected = torch.full_like(result, 0xA5)
+    for i, slot in enumerate(slots.tolist()):
+        if slot < 0:
+            continue
+        block, offset = divmod(slot, page)
+        x = keys[i].float()
+        # Native cache op uses 1e-4 minimum amax (query helper uses 1e-10).
+        scale = torch.exp2(torch.ceil(torch.log2(x.abs().amax().clamp_min(1e-4) / 448.0)))
+        raw = (x / scale).clamp(-448, 448).to(torch.float8_e4m3fn).view(torch.uint8)
+        expected[block, offset*dim:(offset+1)*dim] = raw
+        start = page*dim + offset*4
+        expected[block, start:start+4] = scale.reshape(1).view(torch.uint8)
+    assert torch.equal(result, expected), "native K insertion bytes/scale/guard mismatch"
+    print("native K cache insert PASS")
+
+
 if __name__ == "__main__":
-    assert torch.cuda.get_device_capability() == (8, 0)
-    assert torch.version.cuda.startswith("13.")
+    if not torch.cuda.is_available() or torch.cuda.get_device_capability() != (8, 0):
+        raise RuntimeError("requires physical SM80")
+    if not torch.version.cuda or not torch.version.cuda.startswith("13.2"):
+        raise RuntimeError("requires pinned CUDA 13.2 PyTorch build")
     test_sink()
     test_quant()
     test_mqa()
+    test_native_indexer_insert()
+    torch.cuda.synchronize()
     print("HYV4_SM80_KERNELS=PASS")

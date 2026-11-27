@@ -15,5 +15,17 @@ jobs:
         run: |
           python3 -m compileall -q hy4/cu13
           for f in hy4/cu13/*.sh; do bash -n "$f"; done
-      - name: Replay overlay against exact upstream pin
+      - name: Replay and verify exact upstream overlay
         run: bash hy4/cu13/prepare_source.sh "$RUNNER_TEMP/vllm-source"
+      - name: Verify drift rejection
+        run: |
+          src="$RUNNER_TEMP/vllm-source"
+          printf '\n# unexpected change\n' >> "$src/vllm/models/hy_v4/nvidia/attention.py"
+          if python3 hy4/cu13/apply_overlay.py "$src" --verify-applied; then
+            echo "modified overlay erroneously accepted" >&2; exit 1
+          fi
+      - name: CPU sink reference
+        run: |
+          python3 -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu
+          python3 -m pip install pytest
+          OMP_NUM_THREADS=1 python3 -m pytest -q hy4/cu13/test_sink_cpu.py

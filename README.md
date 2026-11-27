@@ -1,3 +1,11 @@
+# Hy4-FP8 on A100 — CUDA 13 (experimental)
+
+**For this branch, use only [hy4/cu13/README.md](hy4/cu13/README.md) and the scripts under `hy4/cu13/`.** Target is the released flagship, not Hy4 Flash, with CUDA 13.2.1 pinned by upstream. Root DeepSeek CUDA 12.9 files below are inherited history, not the Hy4 build or launch path. Do not run the root SIF/serving scripts for Hy4. The CUDA 13 port has not passed native GPU/build/model serving validation.
+
+---
+
+## Historical DeepSeek branch documentation (not Hy4)
+
 # DeepSeek-V4.1-Flash on A100/A800 (SM80) - CUDA 12.9
 
 Run `deepseek-ai/DeepSeek-V4.1-Flash` with text + vision on NVIDIA A100/A800 using the official vLLM DeepSeek-V4.1 CUDA 12.9 image plus a verified production-minimal SM80 patch.

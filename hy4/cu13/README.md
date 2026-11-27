@@ -2,7 +2,7 @@
 
 Target: public tencent/Hy4-FP8, NOT Flash or Preview, 2 nodes x 8 A100 80GB.
 Source pin: vLLM PR #68633 head 3470b0db1820f699960d1376223602739a0f4ac3
-(inspected 2026-11-26), including flagship registration, Triton sparse MLA/MQA
+(pinned 2026-11-27), including flagship registration, Triton sparse MLA/MQA
 and software E4M3FN. This is an unmerged PR, not a stable release.
 
 ## Implementation
@@ -31,7 +31,7 @@ The official hy4 Docker tag is mutable and may carry a different native ABI.
 We build native extensions together with the source instead of blindly mixing
 a newer Python overlay with that image.
 
-On a connected Docker/BuildKit host:
+On a connected Docker/BuildKit host (root-level DeepSeek scripts and CUDA 12.9 metadata are historical, not this port):
 
     cd hy4/cu13
     bash prepare_source.sh
@@ -42,10 +42,10 @@ Optional: SIF_PATH=/path/hy4-sm80-cu13.sif bash build.sh
 Record image ID, driver, checkpoint revision and hashes before transferring
 identical immutable images/checkpoints to both nodes.
 
-Run GPU tests before loading the full checkpoint:
+The build now verifies exact overlay bytes, rejects unrelated source changes, and checks the packaged image's CUDA runtime and Hy4 modules. Native GPU compilation/runtime remain unverified. Run GPU tests before loading the full checkpoint:
 
     docker run --rm --gpus all --ipc=host -v "$PWD:/port:ro" \
-      --entrypoint python3 hy4-sm80:cu13-dev /port/test_kernels.py
+      --entrypoint python3 hy4-sm80:cu132-dev /port/test_kernels.py
 
 Apptainer: apptainer exec --nv /path/hy4-sm80-cu13.sif python3 test_kernels.py
 
@@ -65,7 +65,7 @@ Node 1:
 Replace example IP. Worker is headless. TP8 x PP2, 37/41 layers (stage 2
 starts on a full indexer), eager, text-only, BF16 main KV, prefix cache off,
 4K context, one request. DFly2 off because PP is unsupported with it.
-Both nodes start with identical options except node rank. After passing
+Both nodes start with identical options except node rank. The launcher checks all 8 visible GPUs, BF16 matmul, checkpoint architecture/FP8 scheme and shard existence, and runs the GPU kernel checks before the load on each node. This is not a cryptographic checkpoint verification; pin/hash weights and compare the same image ID or SIF SHA256 across nodes. After passing
 this profile, test 39/39 to exercise cross-stage shared top-k, then 32K,
 128K, concurrency, prefix cache, graph and vision. Full 1M requires more
 KV capacity; do not equate configured length with a successful request.
@@ -73,10 +73,12 @@ KV capacity; do not equate configured length with a successful request.
 ## Outstanding validation
 
 No Docker build, GPU kernel execution or full-checkpoint inference has been
-performed by this authoring session. Source anchors checked against pinned
+performed by this audit session. CPU sink reference: 7 tests passed locally; see AUDIT.md for scope. Source anchors checked against pinned
 GitHub files. The source pin is an unmerged community PR; GPU regressions
 are possible. Test K-cache insertion/gather, FP8 Marlin repacking and MoE,
 iHC, gated MLA, actual model loading, PP transfer, prompt/response equivalence,
 tool calls, then long context. No claim of A100 serving success or speed.
 See ../PORTING_PLAN.md for external evidence and validation gates (older
 CUDA 12.9 assumption superseded by this CUDA 13 plan).
+
+CUDA 13.2.1 requires a compatible host driver; R595 is the matching branch. R580+ provides CUDA 13.x minor compatibility with limitations (in particular PTX/JIT features); do not assume JIT success just from nvidia-smi's CUDA version. See https://docs.nvidia.com/deploy/cuda-compatibility/latest/minor-version-compatibility.html.

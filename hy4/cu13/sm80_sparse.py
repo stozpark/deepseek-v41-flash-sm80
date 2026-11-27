@@ -14,13 +14,7 @@ from vllm.v1.attention.backends.mla.triton_mla_sparse import (
 from vllm.v1.attention.ops.triton_mla_sparse import triton_mla_sparse_fwd
 
 
-def apply_attention_sink(out, lse, sinks):
-    """Add a zero-value virtual key, using natural-log LSE AFTER split merge."""
-    weight = torch.sigmoid(lse.float() - sinks)
-    weight = weight.masked_fill(torch.isneginf(lse), 0.0)
-    return (out.float() * weight.unsqueeze(-1)).to(out.dtype), torch.logaddexp(
-        lse.float(), sinks
-    )
+from .sink_math import apply_attention_sink
 
 
 class HYV4SM80SparseImpl(TritonMLASparseImpl):
@@ -33,6 +27,8 @@ class HYV4SM80SparseImpl(TritonMLASparseImpl):
             raise ValueError("HYV4 SM80 requires one FP32 sink per local head")
         if self.kv_lora_rank != 512 or self.qk_rope_head_dim != 64:
             raise ValueError("HYV4 SM80 requires latent512 + RoPE64")
+        if self.dcp_world_size != 1 or self.pcp_world_size != 1:
+            raise NotImplementedError("HYV4 SM80 context parallelism is not validated")
         self.sinks = sinks
 
     def _forward_mqa_kernel(
@@ -48,8 +44,12 @@ class HYV4SM80SparseImpl(TritonMLASparseImpl):
         )
         if lse is None:
             raise RuntimeError("SM80 sparse MLA did not return LSE")
-        out, sink_lse = apply_attention_sink(out, lse, self.sinks)
-        return out, sink_lse if self.need_to_return_lse_for_decode else None
+        # CP is forbidden; upstream real-key LSE convention is not altered.
+        # Do not spend a second logaddexp launch when LSE is not consumed.
+        if self.need_to_return_lse_for_decode:
+            raise RuntimeError("unexpected LSE consumer on HYV4 SM80")
+        out, _ = apply_attention_sink(out, lse, self.sinks, return_lse=False)
+        return out, None
 
 
 class HYV4SM80SparseBackend(TritonMLASparseBackend):

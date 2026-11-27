@@ -1,3 +1,5 @@
+> **Historical Phase 0 plan.** CUDA 12.9 assumptions are superseded by [the CUDA 13 port](cu13/README.md). Do not use the old branch for Hy4. This document preserves the original research evidence.
+
 # Hy4-FP8 on A100 (SM80) — Phase 0 investigation
 
 Status: research only; no Hy4 kernel patch, image build, GPU run, or speed/quality claim yet.

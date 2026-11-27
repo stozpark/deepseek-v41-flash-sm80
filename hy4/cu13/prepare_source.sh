@@ -16,5 +16,6 @@ fi
 git -C "$SRC" checkout --detach "$PIN"
 python3 "$HERE/apply_overlay.py" "$SRC" --check-only
 python3 "$HERE/apply_overlay.py" "$SRC"
+python3 "$HERE/apply_overlay.py" "$SRC" --verify-applied
 git -C "$SRC" diff --check
 git -C "$SRC" status --short
