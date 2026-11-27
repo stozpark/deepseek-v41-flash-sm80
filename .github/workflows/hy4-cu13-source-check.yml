@@ -28,4 +28,4 @@ jobs:
         run: |
           python3 -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu
           python3 -m pip install pytest
-          OMP_NUM_THREADS=1 python3 -m pytest -q hy4/cu13/test_sink_cpu.py
+          OMP_NUM_THREADS=1 python3 -m pytest -q hy4/cu13/test_sink_cpu.py hy4/cu13/test_contract_cpu.py

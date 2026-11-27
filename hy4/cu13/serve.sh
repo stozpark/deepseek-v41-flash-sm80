@@ -11,8 +11,13 @@ export VLLM_PP_LAYER_PARTITION="${VLLM_PP_LAYER_PARTITION:-37,41}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 export MODEL_PATH
 # First bring-up: check both nodes independently before allocating full weights.
+export PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}"
+export HY4_AUDIT_TRACE="${HY4_AUDIT_TRACE:-1}"
+unset HY4_FIXTURE_MODE
+python3 "$HERE/image_verify.py" "${HY4_IMAGE_MANIFEST:-$HERE/image-manifest.json}" --gpu
 python3 "$HERE/runtime_preflight.py"
 python3 "$HERE/test_kernels.py"
+python3 "$HERE/test_marlin.py"
 opts=()
 if [[ "$NODE_RANK" == 1 ]]; then opts+=(--headless); fi
 exec vllm serve "$MODEL_PATH" \
@@ -21,11 +26,12 @@ exec vllm serve "$MODEL_PATH" \
   --distributed-executor-backend mp --data-parallel-backend mp --nnodes 2 --node-rank "$NODE_RANK" \
   --master-addr "$MASTER_ADDR" --master-port "${MASTER_PORT:-29500}" \
   --attention-config '{"backend":"TRITON_MLA_SPARSE","sparse_mla_force_mqa":true,"sparse_mla_shard_q":false}' \
-  --moe-backend marlin --block-size 64 \
+  --moe-backend marlin --linear-backend marlin --block-size 64 \
+  --worker-cls audited_worker.AuditedWorker \
   --language-model-only --enforce-eager --no-enable-prefix-caching \
   --disable-custom-all-reduce \
   --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION:-0.90}" \
   --max-model-len "${MAX_MODEL_LEN:-4096}" \
-  --max-num-batched-tokens "${MAX_BATCHED_TOKENS:-1024}" --max-num-seqs 1 \
+  --max-num-batched-tokens "${MAX_BATCHED_TOKENS:-1024}" --max-num-seqs "${MAX_NUM_SEQS:-1}" \
   --enable-auto-tool-choice --reasoning-parser hy_v4 --tool-call-parser hy_v4 \
   --host "${HOST:-127.0.0.1}" --port "${PORT:-8000}" "${opts[@]}"

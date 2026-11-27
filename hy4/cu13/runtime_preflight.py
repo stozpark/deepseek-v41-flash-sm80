@@ -22,6 +22,9 @@ def check_checkpoint(path, partition):
         "index_topk": 2048, "index_head_dim": 128, "index_n_heads": 32,
         "enable_ihc": True, "hc_mult": 4, "gated_mla": True,
         "learnable_sink": True, "num_nextn_predict_layers": 0,
+        "swiglu_limit": 10.0, "num_experts_per_tok": 8,
+        "moe_intermediate_size": 2048, "qk_nope_head_dim": 192,
+        "v_head_dim": 256, "q_lora_rank": 2048,
     }.items():
         require(t.get(name) == expected, f"wrong checkpoint {name}: {t.get(name)!r}")
     q = config.get("quantization_config") or t.get("quantization_config") or {}
@@ -39,7 +42,10 @@ def check_checkpoint(path, partition):
     require(len(sizes) == 2 and min(sizes) > 0 and sum(sizes) == 78,
             "PP partition must contain two positive counts totaling 78")
     idx = t.get("indexer_types", [])
-    require(len(idx) == 78, "missing full/shared indexer pattern")
+    require(idx == ["full" if i == 0 or (i-1) % 4 == 0 else "shared"
+                    for i in range(78)], "wrong full/shared indexer pattern")
+    require(t.get("layer_types") == ["deepseek_sparse_attention"] * 78,
+            "wrong sparse attention layer contract")
     if idx[sizes[0]] == "shared":
         print("WARNING: PP stage 2 starts with shared indices; cross-stage transfer is unverified")
     index = json.loads((path / "model.safetensors.index.json").read_text())

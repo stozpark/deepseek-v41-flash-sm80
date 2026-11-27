@@ -145,5 +145,8 @@ if __name__ == "__main__":
     test_quant()
     test_mqa()
     test_native_indexer_insert()
+    from test_gpu_integration import test_indexer_chain, test_large_addresses
+    test_indexer_chain()
+    test_large_addresses()
     torch.cuda.synchronize()
     print("HYV4_SM80_KERNELS=PASS")

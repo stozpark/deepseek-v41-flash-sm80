@@ -17,16 +17,15 @@ DOCKER_BUILDKIT=1 docker build \
   --build-arg "VLLM_IMAGE_TAG=$TAG" \
   --label "hy4.sm80.source=$HY4_SOURCE_PIN" \
   -t "$TAG" "$SRC"
-# Packaging check needs no GPU. Import the shipped helper rather than the
-# host source, and reject stale/unpatched or wrong-CUDA artifacts.
-docker run --rm --entrypoint python3 "$TAG" -c '
-import importlib.util
-import torch
-assert torch.version.cuda and torch.version.cuda.startswith("13.2"), torch.version.cuda
-for name in ("sm80_sparse", "sm80_indexer_quant", "sink_math"):
-    assert importlib.util.find_spec("vllm.models.hy_v4.nvidia." + name), name
-print("HY4_IMAGE_PACKAGE=PASS", torch.__version__, torch.version.cuda)
-'
+# Do not publish a manifest if the built image fails package verification.
+# Use an independent temporary directory so the mounted port stays read-only.
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+python3 "$HERE/image_verify.py" "$TMP/image-manifest.json" --create-from "$SRC"
+docker run --rm -v "$HERE:/port:ro" -v "$TMP:/verify:ro" \
+  --entrypoint python3 "$TAG" /port/image_verify.py /verify/image-manifest.json
+cp "$TMP/image-manifest.json" "$HERE/image-manifest.json"
+sha256sum "$HERE/image-manifest.json"
 docker image inspect "$TAG" --format '{{.Id}}'
 if [[ -n "${SIF_PATH:-}" ]]; then
   apptainer build "$SIF_PATH" "docker-daemon://$TAG"

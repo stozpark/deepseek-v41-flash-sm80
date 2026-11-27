@@ -70,6 +70,57 @@ this profile, test 39/39 to exercise cross-stage shared top-k, then 32K,
 128K, concurrency, prefix cache, graph and vision. Full 1M requires more
 KV capacity; do not equate configured length with a successful request.
 
+## Review follow-up: mandatory validation sequence
+
+The build creates image-manifest.json and checks native ABI imports, actual
+module imports, file SHA256s and CLI arguments. Transfer that manifest and
+the exact port directory with the immutable image/SIF to both nodes.
+All launches now explicitly select Marlin linear and MoE, and audited_worker
+checks every loaded rank's actual layer classes, sink aliases, indexer
+pattern and repacked weights. Eager tracing prints HY4_SPARSE_FORWARD for
+both prefill and decode on each layer/rank; preserve these logs.
+
+Before full loading, run test_kernels.py (native Insert/Gather -> MQA ->
+real Top-K -> physical indices -> sparse MLA, and 2/4GiB address crossing)
+and test_marlin.py (actual FP8 repack/compute for TP8 local dimensions,
+Top-8 MoE with active SwiGLU clamp). The full launcher runs both on each
+node, not all kernels on all eight GPUs; BF16 preflight checks each GPU.
+
+1. Build and verify image/SIF; run the GPU checks on both nodes.
+2. Create a small BF16 fixture on shared storage:
+       python3 make_fixture.py /models/Hy4-FP8 /models/hy4-fixture
+   Optionally create a separate FP8 fixture with --fp8 for dispatch/packing
+   smoke. Dummy load is NOT a real checkpoint or model-quality test.
+3. Run the BF16 fixture with TP_SIZE=1 PP_SIZE=1 bash serve_fixture.sh on
+   one GPU. In a separate shell capture:
+       python3 serve_probe.py --output fixture-pp1.json --interleaved
+   Then restart using TP_SIZE=1 PP_SIZE=2 NNODES=2 NODE_RANK=0/1 and
+   MASTER_ADDR on the two nodes, one visible GPU each, 2,2 partition.
+   Run serve_probe.py --output fixture-pp2.json --reference fixture-pp1.json.
+   Require all worker dispatch/forward logs, nonempty logits, and matched
+   tokens/logprobs. Repeat with 1,3 partition and a different batch budget.
+   Repeat FP8 fixture for Marlin dispatch. Dummy weight initialization and
+   PP arithmetic can differ; a mismatch is a failure to investigate, not
+   a reason to weaken tolerance or declare parity.
+4. Before full TP8 x PP2, verify actual NCCL fabric in the same image:
+       torchrun --nnodes=2 --nproc_per_node=8 --node_rank=0 \
+         --master_addr=MASTER_IP --master_port=29600 nccl_probe.py
+   On node 1 use --node_rank=1. Use the real routable IP and cluster NIC
+   configuration. Require all 16 ranks PASS.
+5. Full official checkpoint: first 37,41 and 4K eager; capture API logits,
+   then 39,39 with shared indices. Compare against a trusted run of the
+   same checkpoint when available; PP-to-PP self-consistency alone
+   cannot prove equivalence to the official W8A8 implementation.
+   Try 32K/128K with MAX_MODEL_LEN >= prompt+32 and exact measured needle
+   budgets, e.g. --needle 32000. Use MAX_NUM_SEQS=2 or more and
+   --interleaved for genuine overlapping requests. Repeat with different
+   MAX_BATCHED_TOKENS to test chunk boundaries. The probe checks chosen
+   tokens/logprobs, not full-vocabulary equality or a quality benchmark.
+   Preserve logs, JSON outputs, image ID, SIF hash and checkpoint revision.
+
+Do not enable graphs, prefix caching, DFly2 or 1M as part of these initial
+acceptance gates. Those require separate parity and capacity tests.
+
 ## Outstanding validation
 
 No Docker build, GPU kernel execution or full-checkpoint inference has been
